@@ -1,0 +1,24 @@
+{
+  "name": "moviepilot-pi-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pi-based personal agent with interchangeable UIs and MoviePilot integration",
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "start": "node dist/src/cli.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.0.4",
+    "@earendil-works/pi-coding-agent": "1.0.4",
+    "@larksuiteoapi/node-sdk": "1.74.0",
+    "typebox": "1.3.27"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "typescript": "5.9.3"
+  }
+}
