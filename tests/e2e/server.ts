@@ -1,0 +1,76 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import {
+  fauxProvider,
+  fauxAssistantMessage,
+  fauxToolCall,
+  type TranscriptContext,
+} from "@earendil-works/pi-ai";
+import { AgentRuntime } from "../../apps/api/src/core/runtime.js";
+import { createApp } from "../../apps/api/src/http/app.js";
+import { FakeBackend } from "../../apps/api/tests/fixtures.js";
+
+const projectDir = resolve("apps/api");
+const dataDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-"));
+const faux = fauxProvider({ provider: "browser-test", tokensPerSecond: 10000 });
+const models = await ModelRuntime.create({
+  authPath: join(dataDir, "auth.json"),
+  modelsPath: null,
+  refreshOnCreate: false,
+});
+models.registerNativeProvider(faux.provider);
+function respond(context: TranscriptContext) {
+  const last = context.messages.at(-1);
+  if (last?.role === "toolResult") {
+    return fauxAssistantMessage("已找到媒体，可以选择资源并继续补充条件。");
+  }
+  const user = [...context.messages].reverse().find((item) => item.role === "user");
+  const text =
+    user?.role === "user"
+      ? typeof user.content === "string"
+        ? user.content
+        : user.content
+            .filter((block) => block.type === "text")
+            .map((block) => block.text)
+            .join("")
+      : "";
+  if (/哈姆奈特|Hamnet/i.test(text)) {
+    return fauxAssistantMessage(fauxToolCall("search_media", { query: "Hamnet" }));
+  }
+  if (/订阅/.test(text)) {
+    return fauxAssistantMessage(fauxToolCall("list_subscriptions", {}));
+  }
+  return fauxAssistantMessage("同一会话中已收到补充条件。");
+}
+faux.setResponses(Array.from({ length: 100 }, () => respond));
+const backend = new FakeBackend();
+const runtime = await AgentRuntime.create({
+  projectDir,
+  dataDir,
+  model: faux.getModel(),
+  modelRuntime: models,
+  backend,
+  onError: console.error,
+});
+const app = await createApp({
+  runtime,
+  ownerId: "owner",
+  authToken: "offline-browser-token-with-at-least-32-characters",
+  tracker: { refresh: async () => undefined },
+  webDir: resolve("apps/web/dist"),
+});
+await app.listen({ host: "127.0.0.1", port: 8788 });
+async function shutdown() {
+  const closed = app.close();
+  await runtime.close();
+  await closed;
+  await rm(dataDir, { recursive: true, force: true });
+}
+process.once("SIGTERM", () => {
+  void shutdown();
+});
+process.once("SIGINT", () => {
+  void shutdown();
+});

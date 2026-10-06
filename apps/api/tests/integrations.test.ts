@@ -1,0 +1,124 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { MoviePilotClient } from "../src/integrations/moviepilot.js";
+import { createLarkChannel, LoggerLevel } from "@larksuiteoapi/node-sdk";
+import { media, resource } from "./fixtures.js";
+
+const baseUrl = "http://moviepilot:3000/api/v1/";
+
+test("MP client uses the configured API prefix and bearer header, and strips private fields", async () => {
+  const request: typeof fetch = async (url, options) => {
+    assert.equal(String(url), `${baseUrl}download/`);
+    assert.equal(new Headers(options?.headers).get("authorization"), "Bearer test-token");
+    assert.equal(options?.redirect, "error");
+    return Response.json([
+      {
+        hash: "task-1",
+        title: "Hamnet",
+        state: "downloading",
+        progress: 20,
+        path: "private-path",
+        trackers: ["private-passkey"],
+      },
+    ]);
+  };
+  const client = new MoviePilotClient({ baseUrl, accessToken: "test-token" }, request);
+  assert.deepEqual(await client.getDownloading(), [
+    { hash: "task-1", title: "Hamnet", state: "downloading", progress: 20 },
+  ]);
+});
+
+test("MP errors never echo response bodies or credentials", async () => {
+  const client = new MoviePilotClient(
+    { baseUrl, accessToken: "secret" },
+    async () => new Response("private config", { status: 401 }),
+  );
+  await assert.rejects(client.getDownloading(), /HTTP 401/);
+});
+
+test("MP submit preserves its declared native context and never retries uncertain writes", async () => {
+  let calls = 0;
+  const selected = resource("Hamnet.2160p.DDP5.1");
+  const client = new MoviePilotClient(
+    { baseUrl, accessToken: "secret", downloader: "qb", savePath: "/downloads" },
+    async (_url, options) => {
+      calls++;
+      assert.deepEqual(JSON.parse(String(options?.body)), {
+        media_in: media.raw,
+        torrent_in: selected.torrent,
+        downloader: "qb",
+        save_path: "/downloads",
+      });
+      throw new TypeError("connection reset");
+    },
+  );
+  await assert.rejects(client.submitDownload(media, selected), /不确定/);
+  assert.equal(calls, 1);
+});
+
+test("MP explicitly rejected writes differ from server errors and incomplete acknowledgements", async () => {
+  const rejected = new MoviePilotClient({ baseUrl, accessToken: "secret" }, async () =>
+    Response.json({ success: false, message: "private information" }),
+  );
+  await assert.rejects(rejected.submit115(["magnet"]), /未接受/);
+  const uncertain = new MoviePilotClient(
+    { baseUrl, accessToken: "secret" },
+    async () => new Response("private information", { status: 503 }),
+  );
+  await assert.rejects(uncertain.submit115(["magnet"]), /不确定/);
+});
+
+test("expired auth refreshes once for concurrent readers and uses configured login credentials", async () => {
+  let logins = 0;
+  const client = new MoviePilotClient(
+    { baseUrl, username: "test-user", password: "test-password" },
+    async (url, options) => {
+      if (String(url).endsWith("login/access-token")) {
+        logins++;
+        assert.equal(String(options?.body), "username=test-user&password=test-password");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return Response.json({ access_token: "new-token", expires_in: 1800 });
+      }
+      assert.equal(new Headers(options?.headers).get("authorization"), "Bearer new-token");
+      return Response.json([]);
+    },
+  );
+  await Promise.all([client.getDownloading(), client.getDownloading()]);
+  assert.equal(logins, 1);
+});
+
+test("empty remote missing list establishes library presence while missing play URL stays absent", async () => {
+  const client = new MoviePilotClient({ baseUrl, accessToken: "secret" }, async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith("/notexists")) {
+      return Response.json([]);
+    }
+    if (path.endsWith("/exists")) {
+      return Response.json({ success: false, data: { item: {} } });
+    }
+    throw new Error("Unexpected API call");
+  });
+  assert.deepEqual(await client.checkLibrary(media, {}), { exists: true, episodes: undefined });
+});
+
+test("official Feishu SDK exposes normalized events, streaming and shutdown without connecting", async () => {
+  const channel = createLarkChannel({
+    appId: "cli_0000000000000000",
+    appSecret: "offline-test",
+    loggerLevel: LoggerLevel.error,
+  });
+  assert.equal(typeof channel.on, "function");
+  assert.equal(typeof channel.stream, "function");
+  await channel.disconnect();
+});
+
+test("protocol mismatches fail at the adapter instead of guessing legacy response fields", async () => {
+  const client = new MoviePilotClient({ baseUrl, accessToken: "secret" }, async () =>
+    Response.json([{ id: "task", name: "legacy-name", status: "running" }]),
+  );
+  await assert.rejects(client.getDownloading(), /响应不符合约定/);
+  const incomplete = new MoviePilotClient({ baseUrl, accessToken: "secret" }, async () =>
+    Response.json({ success: true, data: {} }),
+  );
+  await assert.rejects(incomplete.submitDownload(media, resource("Movie.2160p")), /不确定/);
+});

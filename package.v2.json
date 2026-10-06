@@ -1,0 +1,11 @@
+{
+  "PiAgentBridge": {
+    "name": "Pi Agent 桥接",
+    "description": "连接独立 TypeScript Pi Agent，提供实际下载状态与公开种子链接解析。",
+    "version": "1.0.0",
+    "icon": "ChatGPT_A.png",
+    "author": "Tsutomu-miku",
+    "level": 1,
+    "history": { "v1.0.0": "独立 Agent 的 MoviePilot 桥接 API 和网页入口。" }
+  }
+}

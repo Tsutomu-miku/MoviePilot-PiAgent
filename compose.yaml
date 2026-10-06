@@ -1,0 +1,16 @@
+services:
+  pi-agent:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      AGENT_DATA_DIR: /app/data
+    ports:
+      - "8787:8787"
+    volumes:
+      - agent-data:/app/data
+    stop_grace_period: 45s
+
+volumes:
+  agent-data:
