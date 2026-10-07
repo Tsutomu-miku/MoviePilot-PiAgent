@@ -8,6 +8,8 @@ import Database from "better-sqlite3";
 
 const project = process.cwd();
 const version = JSON.parse(await readFile("package.v2.json", "utf8")).PiAgentBridge.version;
+const runtimeManifestPath = join(project, "plugins.v2/piagentbridge/runtime-manifest.json");
+const runtimeVersion = JSON.parse(await readFile(runtimeManifestPath, "utf8")).version;
 const platform = `${process.platform}-${process.arch}`;
 if (!["linux-x64", "linux-arm64"].includes(platform)) {
   throw new Error("Plugin runtime packaging requires Linux x64 or arm64");
@@ -83,14 +85,14 @@ if (typeof ModelRuntime.create !== "function") {
 }
 `,
 ]);
-const archiveName = `piagent-runtime-${version}-${platform}.tar.gz`;
+const archiveName = `piagent-runtime-${runtimeVersion}-${platform}.tar.gz`;
 run("tar", ["-czf", join(output, archiveName), "-C", stage, "."]);
 const archive = await readFile(join(output, archiveName));
 const manifest = {
-  version,
+  version: runtimeVersion,
   platforms: {
     [platform]: {
-      url: `https://github.com/Tsutomu-miku/MoviePilot-PiAgent/releases/download/PiAgentBridge_v${version}/${archiveName}`,
+      url: `https://github.com/Tsutomu-miku/MoviePilot-PiAgent/releases/download/PiAgentBridge_v${runtimeVersion}/${archiveName}`,
       sha256: createHash("sha256").update(archive).digest("hex"),
     },
   },
@@ -104,7 +106,8 @@ for (const name of await readdir(join(project, "plugins.v2/piagentbridge"))) {
     await cp(join(project, "plugins.v2/piagentbridge", name), join(pluginStage, name));
   }
 }
-await cp(join(output, "runtime-manifest.json"), join(pluginStage, "runtime-manifest.json"));
+// Python-only plugin patches keep the published runtime and its pinned checksum.
+await cp(runtimeManifestPath, join(pluginStage, "runtime-manifest.json"));
 run("python3", [
   join(project, "scripts/zip-plugin.py"),
   pluginStage,

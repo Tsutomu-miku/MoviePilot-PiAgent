@@ -128,7 +128,9 @@ packages/contracts/        两端共享的 Zod 协议与 SSE 解码
 plugins.v2/piagentbridge/   小型 MP Python 桥接
 ```
 
-`npm run package:plugin` 生成市场插件 ZIP、包含 Node 的平台运行时和校验清单。打包使用本机已经通过测试的 SQLite 原生模块，并验证打包后的 Pi 与 SQLite 可加载；生产环境不现场构建依赖。发布时一起上传 ZIP 和对应运行时到 `PiAgentBridge_v版本` Release，并将该校验清单保存到插件源码目录。
+`npm run package:plugin` 生成市场插件 ZIP、包含 Node 的平台运行时和校验清单。打包使用本机已经通过测试的 SQLite 原生模块，并验证打包后的 Pi 与 SQLite 可加载；生产环境不现场构建依赖。插件版本与运行时版本独立，ZIP 使用源码中固定的运行时版本和校验值。
+
+发布新的运行时时，将运行时上传到其版本对应的 `PiAgentBridge_v版本` Release，并将生成的校验清单保存到插件源码目录后重新打包 ZIP。仅修改 Python 插件的补丁只发布新的 ZIP，保留原运行时清单，复用用户已下载的运行时。
 
 新增能力应在 `capabilities/` 注册声明参数的工具，复用 Pi 执行循环；业务写操作由服务层执行确认和去重。新增 UI 只实现统一事件适配和认证映射，不维护另一份模型历史。Prettier、ESLint 与 Ruff 保持展开、可读的格式；不以减少代码行数为目标。
 

@@ -11,7 +11,7 @@ from app.plugins import _PluginBase
 from app.schemas import TokenPayload
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .config import PluginConfig
 from .hosted import proxy_request
@@ -33,17 +33,27 @@ class PiAgentBridge(_PluginBase):
     plugin_name = "Pi Agent 媒体助手"
     plugin_desc = "安装、配置和管理 Pi 媒体助手；网页、飞书共用同一个会话核心。"
     plugin_icon = "ChatGPT_A.png"
-    plugin_version = "1.1.0"
+    plugin_version = "1.1.1"
     plugin_author = "Tsutomu-miku"
     author_url = "https://github.com/Tsutomu-miku"
     plugin_config_prefix = "piagentbridge_"
     plugin_order = 30
     auth_level = 1
     _runtime = None
+    _configuration_error = ""
 
     def init_plugin(self, config: Optional[dict] = None):
-        values = PluginConfig.model_validate(config or {})
         self.stop_service()
+        self._runtime = None
+        self._enabled = False
+        self._configuration_error = ""
+        try:
+            values = PluginConfig.model_validate(config or {})
+        except ValidationError as error:
+            issues = error.errors(include_input=False, include_url=False, include_context=False)
+            self._configuration_error = "；".join(issue["msg"] for issue in issues)
+            logger.error("Pi Agent 配置已保存，未启动：%s" % self._configuration_error)
+            return
         self._config = values
         self._enabled = values.enabled
         data_dir = self.get_data_path()
@@ -244,7 +254,12 @@ class PiAgentBridge(_PluginBase):
                 False,
             ),
             ("feishu_app_secret", "飞书 App Secret", "使用应用长连接，无需公网回调地址。", True),
-            ("feishu_open_ids", "允许使用的 open_id", "逗号分隔。", False),
+            (
+                "feishu_open_ids",
+                "允许使用的 open_id",
+                "启用飞书时必填；ou_ 开头的用户 ID，多个用逗号分隔。",
+                False,
+            ),
             ("feishu_group_ids", "允许使用的群 ID", "逗号分隔；留空时禁用群聊。", False),
         ]
         fields = [
@@ -268,6 +283,7 @@ class PiAgentBridge(_PluginBase):
         return fields
 
     def get_page(self) -> List[dict]:
+        state = "configuration_error" if self._configuration_error else self._runtime.state
         content = [
             {
                 "component": "VAlert",
@@ -279,21 +295,30 @@ class PiAgentBridge(_PluginBase):
             },
             {
                 "component": "VChip",
-                "props": {"color": "success" if self._runtime.state == "running" else "warning"},
+                "props": {"color": "success" if state == "running" else "warning"},
                 "text": {
                     "disabled": "未启用，请先配置模型",
                     "installing": "正在安装运行时",
                     "starting": "正在启动",
                     "running": "运行中",
                     "error": "启动失败",
-                }[self._runtime.state],
+                    "configuration_error": "配置已保存，尚未启动",
+                }[state],
             },
         ]
-        if self._runtime.error:
+        if self._configuration_error:
+            content.append(
+                {
+                    "component": "VAlert",
+                    "props": {"type": "error"},
+                    "text": self._configuration_error,
+                }
+            )
+        if self._runtime and self._runtime.error:
             content.append(
                 {"component": "VAlert", "props": {"type": "error"}, "text": self._runtime.error}
             )
-        if self._runtime.state == "running":
+        if state == "running":
             content.append(
                 {
                     "component": "VBtn",

@@ -27,10 +27,10 @@ class PluginConfig(BaseModel):
             parsed = urlsplit(self.base_url)
             if parsed.scheme not in ("http", "https") or not parsed.hostname:
                 raise ValueError("模型端点必须是 HTTP 或 HTTPS 地址")
-        if self.feishu_enabled and not (
-            self.feishu_app_id and self.feishu_app_secret and self.feishu_open_ids.strip()
-        ):
-            raise ValueError("启用飞书需要应用凭据和用户 open_id 白名单")
+        if self.feishu_enabled and not (self.feishu_app_id and self.feishu_app_secret):
+            raise ValueError("启用飞书需要填写 App ID 和 App Secret")
+        if self.feishu_enabled and not self.feishu_open_ids.strip():
+            raise ValueError("启用了飞书，请填写“允许使用的 open_id”（ou_ 开头的用户 ID）")
         return self
 
     def agent_environment(self):

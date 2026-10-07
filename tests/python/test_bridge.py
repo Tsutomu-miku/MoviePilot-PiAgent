@@ -157,10 +157,63 @@ class BridgeTests(unittest.TestCase):
         page = self.plugin.get_page()
         button = page[0]["content"][-1]
         self.assertEqual(button["props"]["href"], "/api/v1/plugin/PiAgentBridge/ui/")
-        with self.assertRaises(ValidationError):
-            self.plugin.init_plugin({"enabled": True})
-        with self.assertRaises(ValidationError):
-            self.plugin.init_plugin({"base_url": "javascript:alert(1)"})
+        self.plugin.init_plugin({"enabled": True})
+        self.assertFalse(self.plugin.get_state())
+        self.assertIn("启用前请填写", self.plugin._configuration_error)
+        self.plugin.init_plugin({"base_url": "javascript:alert(1)"})
+        self.assertIn("HTTP", self.plugin._configuration_error)
+
+    def test_invalid_saved_configuration_stops_old_runtime_and_never_logs_credentials(self):
+        previous = self.plugin._runtime
+        configuration = {
+            "enabled": True,
+            "model": "configured-model",
+            "api_key": "private-model-key",
+            "feishu_enabled": True,
+            "feishu_app_id": "cli_example",
+            "feishu_app_secret": "private-app-secret",
+            "feishu_open_ids": "",
+        }
+        self.plugin.init_plugin(configuration)
+        previous.stop.assert_called_once()
+        self.assertFalse(self.plugin.get_state())
+        self.assertIsNone(self.plugin._runtime)
+        page = str(self.plugin.get_page())
+        self.assertIn("允许使用的 open_id", page)
+        self.assertNotIn(configuration["api_key"], page)
+        self.assertNotIn(configuration["feishu_app_secret"], page)
+        self.assertNotIn(configuration["api_key"], str(self.module.logger.error.call_args))
+        self.assertNotIn(
+            configuration["feishu_app_secret"], str(self.module.logger.error.call_args)
+        )
+
+    def test_mp_save_endpoint_can_store_incomplete_settings_without_a_server_error(self):
+        saved = []
+        app = FastAPI()
+
+        @app.put("/plugin/PiAgentBridge")
+        def save_configuration(configuration: dict):
+            saved.append(configuration)
+            self.plugin.init_plugin(configuration)
+            return {"success": True}
+
+        client = TestClient(app)
+        configuration = {
+            "enabled": True,
+            "model": "configured-model",
+            "api_key": "model-key",
+            "feishu_enabled": True,
+            "feishu_app_id": "cli_example",
+            "feishu_app_secret": "app-secret",
+        }
+        response = client.put("/plugin/PiAgentBridge", json=configuration)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(saved, [configuration])
+        self.assertFalse(self.plugin.get_state())
+        configuration["feishu_open_ids"] = "ou_owner"
+        self.assertEqual(client.put("/plugin/PiAgentBridge", json=configuration).status_code, 200)
+        self.assertTrue(self.plugin.get_state())
+        self.assertEqual(self.plugin._configuration_error, "")
 
     def test_hosted_routes_require_moviepilot_admin_cookie(self):
         app = FastAPI()

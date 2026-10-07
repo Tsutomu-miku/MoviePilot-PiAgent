@@ -2,13 +2,14 @@
   "PiAgentBridge": {
     "name": "Pi Agent 媒体助手",
     "description": "普通 MP 插件安装，自动管理 Pi 运行时；网页、飞书共用同一个媒体助手。",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "system_version": ">=2.15.6",
     "release": true,
     "icon": "ChatGPT_A.png",
     "author": "Tsutomu-miku",
     "level": 1,
     "history": {
+      "v1.1.1": "配置校验不再导致 MP 保存失败，显示具体未启动原因，避免将密钥写入错误日志。",
       "v1.1.0": "插件托管运行时、内置模型和飞书配置、复用 MP 登录与网页代理。",
       "v1.0.0": "独立 Agent 的 MoviePilot 桥接 API 和网页入口。"
     }
