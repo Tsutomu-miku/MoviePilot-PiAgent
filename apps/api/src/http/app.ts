@@ -18,6 +18,7 @@ export interface AppOptions {
   authToken: string;
   webDir?: string;
   logger?: boolean;
+  rateLimitMax?: number;
 }
 const conversationParams = z.object({ id: z.string().uuid() });
 const taskQuery = z.object({ conversationId: z.string().uuid().optional() });
@@ -29,7 +30,12 @@ export async function createApp(options: AppOptions) {
       ? { redact: ["req.headers.authorization", "req.headers.cookie"] }
       : false,
   });
-  await app.register(rateLimit, { max: 120, timeWindow: "1 minute" });
+  await app.register(rateLimit, {
+    max: options.rateLimitMax ?? 120,
+    timeWindow: "1 minute",
+    errorResponseBuilder: (_request, context) =>
+      new AppError("RATE_LIMITED", "请求过于频繁，请稍后再试", context.statusCode),
+  });
   app.addHook("onRequest", async (request, reply) => {
     const path = request.url.split("?")[0]!;
     if (!path.startsWith("/api/") || path === "/api/health") {
@@ -56,7 +62,7 @@ export async function createApp(options: AppOptions) {
   });
   const identity = (id: string) => ({ userId: options.ownerId, conversationId: id });
 
-  app.get("/api/health", async () => ({ status: "ok", version: "1.2.1" }));
+  app.get("/api/health", async () => ({ status: "ok", version: "1.2.2" }));
   app.get("/api/conversations", async () =>
     options.runtime.store.listConversations(options.ownerId),
   );

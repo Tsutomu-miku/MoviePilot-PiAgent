@@ -136,6 +136,26 @@ test("shared SSE decoder handles split UTF-8 and frame boundaries and detects in
   }, /断开/);
 });
 
+test("rate limiting preserves HTTP 429 and retry guidance rather than reporting a server failure", async (t) => {
+  const f = await fixture(t);
+  const app = await createApp({
+    runtime: f.runtime,
+    ownerId: "owner",
+    authToken: token,
+    tracker: { refresh: async () => undefined },
+    rateLimitMax: 2,
+  });
+  t.after(() => app.close());
+  for (let i = 0; i < 2; i++) {
+    const reply = await app.inject({ url: "/api/preferences", headers });
+    assert.equal(reply.statusCode, 200);
+  }
+  const limited = await app.inject({ url: "/api/preferences", headers });
+  assert.equal(limited.statusCode, 429);
+  assert.equal(limited.json().code, "RATE_LIMITED");
+  assert.match(limited.headers["retry-after"]?.toString() ?? "", /^\d+$/);
+});
+
 test("automatically named conversations take their first message while explicit titles are preserved", async (t) => {
   const f = await fixture(t);
   const app = await createApp({

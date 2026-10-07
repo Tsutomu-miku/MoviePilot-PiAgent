@@ -37,7 +37,7 @@ export function TaskList({ items, busy = false, onAction }: Props) {
                     ))}
                   </ul>
                   <p>{item.message}</p>
-                  {item.cleanupTarget && <small>将清理此记录的残留目标</small>}
+                  {item.cleanupTarget && <small>此计划包含残留目标清理</small>}
                 </li>
               ))}
             </ul>

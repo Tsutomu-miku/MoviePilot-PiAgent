@@ -115,7 +115,7 @@ export function viewCard(view: View, conversationId: string): object {
           );
         }
       }
-      if (task.confirmationToken) {
+      if (task.state === "awaiting_confirmation" && task.confirmationToken) {
         elements.push(
           actions([
             button("确认执行", conversationId, {

@@ -6,6 +6,7 @@ import {
   fauxProvider,
   fauxAssistantMessage,
   fauxToolCall,
+  fauxText,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { AgentRuntime } from "../../apps/api/src/core/runtime.js";
@@ -24,9 +25,6 @@ const models = await ModelRuntime.create({
 models.registerNativeProvider(faux.provider);
 function respond(context: TranscriptContext) {
   const last = context.messages.at(-1);
-  if (last?.role === "toolResult") {
-    return fauxAssistantMessage("已找到媒体，可以选择资源并继续补充条件。");
-  }
   const user = [...context.messages].reverse().find((item) => item.role === "user");
   const text =
     user?.role === "user"
@@ -37,6 +35,26 @@ function respond(context: TranscriptContext) {
             .map((block) => block.text)
             .join("")
       : "";
+  if (text === "预览后取消") {
+    if (last?.role === "toolResult" && last.toolName === "prepare_links") {
+      const content = last.content.find((block) => block.type === "text");
+      if (!content || content.type !== "text") {
+        throw new Error("Missing preview result");
+      }
+      const view = JSON.parse(content.text);
+      return fauxAssistantMessage(fauxToolCall("cancel_task", { taskId: view.task.id }));
+    }
+    if (last?.role === "toolResult" && last.toolName === "cancel_task") {
+      return fauxAssistantMessage("预览已取消，没有提交下载。");
+    }
+    return fauxAssistantMessage([
+      fauxText("先生成一份预览。"),
+      fauxToolCall("prepare_links", { links: `magnet:?xt=urn:btih:${"a".repeat(40)}` }),
+    ]);
+  }
+  if (last?.role === "toolResult") {
+    return fauxAssistantMessage("已找到媒体，可以选择资源并继续补充条件。");
+  }
   if (/哈姆奈特|Hamnet/i.test(text)) {
     return fauxAssistantMessage(fauxToolCall("search_media", { query: "Hamnet" }));
   }
@@ -61,6 +79,7 @@ const app = await createApp({
   authToken: "offline-browser-token-with-at-least-32-characters",
   tracker: { refresh: async () => undefined },
   webDir: resolve("apps/web/dist"),
+  rateLimitMax: 1000,
 });
 const hostedPrefix = "/api/v1/plugin/PiAgentBridge/ui/";
 const host = Fastify();

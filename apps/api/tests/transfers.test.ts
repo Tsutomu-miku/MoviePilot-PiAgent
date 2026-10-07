@@ -342,3 +342,18 @@ test("one-file episode ranges are consecutive and ascending", () => {
     assert.equal(transferAssignmentSchema.safeParse({ ...assignment, episodes }).success, false);
   }
 });
+
+test("cancelled transfer previews expose cancelled per-file details", async (t) => {
+  const f = await fixture(t);
+  const task = await prepare(f);
+  const reply = await f.handle(action({ type: "cancel", taskId: task.id }));
+  const view = reply.views.find((item) => item.kind === "tasks");
+  assert.ok(view?.kind === "tasks");
+  assert.equal(view.items[0]!.state, "cancelled");
+  assert.ok(
+    view.items[0]!.transferItems!.every(
+      (item) => item.state === "cancelled" && item.message === "已取消，未执行",
+    ),
+  );
+  assert.equal(f.backend.transferCalls.length, 0);
+});

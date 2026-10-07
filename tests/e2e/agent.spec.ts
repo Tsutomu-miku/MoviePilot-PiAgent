@@ -119,6 +119,20 @@ test("paste links to 115 and save or clear future defaults", async ({ page }) =>
   await expect(page.getByLabel("默认目的地")).toHaveValue("");
 });
 
+test("a preview cancelled in the same reply leaves one cancelled result without a confirmation button", async ({
+  page,
+}) => {
+  await login(page);
+  await page.getByLabel("消息").fill("预览后取消");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
+  await expect(page.getByText("预览已取消，没有提交下载。", { exact: true })).toBeVisible();
+  await expect(page.locator(".chat-history .task")).toHaveCount(1);
+  await expect(page.locator(".chat-history .status")).toHaveText("已取消");
+  await expect(page.getByRole("button", { name: "确认执行", exact: true })).toHaveCount(0);
+  await expect(page.locator(".chat-history")).not.toContainText("先生成一份预览。");
+});
+
 test("mobile layout preserves conversation and exposes usable controls", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page);

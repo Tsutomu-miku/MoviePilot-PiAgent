@@ -1,7 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { fauxAssistantMessage, type TranscriptContext } from "@earendil-works/pi-ai";
+import {
+  fauxAssistantMessage,
+  fauxToolCall,
+  fauxText,
+  type TranscriptContext,
+} from "@earendil-works/pi-ai";
 import type {
   EventMap,
   NormalizedMessage,
@@ -16,6 +21,7 @@ class FakeChannel implements FeishuTransport {
   handlers: Partial<EventMap> = {};
   sent: Array<{ chatId: string; input: SendInput }> = [];
   streams: string[] = [];
+  streamUpdates: string[] = [];
   disconnected = false;
   failStream = false;
 
@@ -45,15 +51,58 @@ class FakeChannel implements FeishuTransport {
       messageId: randomUUID(),
       append: async (chunk) => {
         text += chunk;
+        this.streamUpdates.push(text);
       },
       setContent: async (content) => {
         text = content;
+        this.streamUpdates.push(text);
       },
     });
     this.streams.push(text);
     return { messageId: randomUUID() };
   }
 }
+
+test("Feishu resets streaming text across tool calls and sends only the final cancelled task card", async (t) => {
+  const f = await fixture(t);
+  const channel = new FakeChannel();
+  const ui = new FeishuUi(f.runtime, channel, {
+    ownerId: "owner",
+    allowedOpenIds: ["ou_owner"],
+    allowedGroupIds: [],
+    onError: (error) => f.errors.push(error),
+  });
+  await ui.start();
+  f.faux.setResponses([
+    fauxAssistantMessage([
+      fauxText("先生成预览。"),
+      fauxToolCall("prepare_links", { links: `magnet:?xt=urn:btih:${"a".repeat(40)}` }),
+    ]),
+    (context) => {
+      const result = context.messages.at(-1);
+      assert.ok(result?.role === "toolResult");
+      const text = result.content.find((block) => block.type === "text");
+      assert.ok(text?.type === "text");
+      const view = JSON.parse(text.text);
+      return fauxAssistantMessage([
+        fauxText("取消这份预览。"),
+        fauxToolCall("cancel_task", { taskId: view.task.id }),
+      ]);
+    },
+    fauxAssistantMessage("已取消，未执行。"),
+  ]);
+  channel.handlers.message?.(message("cancel-stream", "预览后取消"));
+  await ui.idle();
+  assert.deepEqual(channel.streams, ["已取消，未执行。"]);
+  assert.ok(!channel.streamUpdates.some((text) => /先生成预览。.*取消这份预览。/s.test(text)));
+  assert.ok(!channel.streamUpdates.some((text) => /^正在处理你的请求…先生成/.test(text)));
+  assert.equal(channel.sent.length, 1);
+  assert.match(JSON.stringify(channel.sent[0]!.input), /已取消/);
+  assert.doesNotMatch(JSON.stringify(channel.sent), /确认执行|等待确认|confirmationToken/);
+  assert.equal(f.backend.submitCalls, 0);
+  assert.equal(f.errors.length, 0);
+  await ui.close();
+});
 function message(id: string, content: string, rootId = "root-one"): NormalizedMessage {
   return {
     messageId: id,

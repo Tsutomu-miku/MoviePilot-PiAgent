@@ -212,9 +212,16 @@ export class FeishuUi {
         markdown: async (controller) => {
           let streamed = false;
           for await (const event of buffer.read()) {
-            if (event.type === "text_delta") {
+            if (event.type === "text_start") {
+              streamed = false;
+              await controller.setContent("正在处理你的请求…");
+            } else if (event.type === "text_delta") {
+              if (streamed) {
+                await controller.append(event.text);
+              } else {
+                await controller.setContent(event.text);
+              }
               streamed = true;
-              await controller.append(event.text);
             } else if (event.type === "reply") {
               await controller.setContent(event.reply.text || "操作结果如下。");
             } else if (event.type === "error") {

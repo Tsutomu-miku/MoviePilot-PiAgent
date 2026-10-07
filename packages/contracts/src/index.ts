@@ -68,6 +68,7 @@ export const taskStateSchema = z.enum([
 export type TaskState = z.infer<typeof taskStateSchema>;
 export const transferItemStateSchema = z.enum([
   "ready",
+  "cancelled",
   "submitting",
   "completed",
   "failed",
@@ -220,6 +221,7 @@ export const agentReplySchema = z.object({
 });
 export type AgentReply = z.infer<typeof agentReplySchema>;
 export const uiEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text_start") }),
   z.object({ type: z.literal("text_delta"), text: z.string() }),
   z.object({ type: z.literal("tool_start"), name: z.string() }),
   z.object({ type: z.literal("tool_end"), name: z.string(), failed: z.boolean() }),

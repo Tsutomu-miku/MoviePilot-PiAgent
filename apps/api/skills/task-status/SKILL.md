@@ -5,7 +5,11 @@ description: Inspect downloads, native subscriptions and library presence using 
 
 Use get_tasks for this conversation's own tasks. get_downloading shows only active MP downloads and excludes completed tasks.
 
+Keep query scopes explicit: neither list describes global organization history. For organization failures, read moviepilot-maintenance and use get_transfer_failures. A feature unavailable earlier may be available now; check the current tool definitions rather than repeating historical assistant claims.
+
 Report awaiting_confirmation, submitted, downloading, downloaded, imported, failed or unknown exactly as observed. A task disappearing from an active list is not evidence of completion. An unknown submission must be checked in the backend; never submit it again automatically.
+
+After preparing, correcting, replacing or cancelling a proposal, use its latest task state for the final reply. A cancelled proposal was not executed; do not continue asking for its confirmation. Briefly state the result and one next step, without repeating the full task card.
 
 Use check_library with the exact media key and required season/episodes. Existing content may predate this request. Only a newly absent-then-present library result or a matching MP transfer history can establish this task's import.
 

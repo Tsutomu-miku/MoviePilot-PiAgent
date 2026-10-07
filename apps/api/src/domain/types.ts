@@ -101,8 +101,8 @@ export function publicTask(task: Task): TaskSummary {
               targetFilename: file.targetFilename,
             })),
             title: item.plan.files[0]!.title,
-            state: item.state,
-            message: item.message,
+            state: task.state === "cancelled" ? "cancelled" : item.state,
+            message: task.state === "cancelled" ? "已取消，未执行" : item.message,
             cleanupTarget: item.plan.cleanupTarget,
           }))
         : undefined,

@@ -44,6 +44,9 @@ export function useChat(api: ApiClient) {
     try {
       for await (const event of api.send(conversationId, { requestId, text, action })) {
         switch (event.type) {
+          case "text_start":
+            update({ text: "", status: "正在回复…" });
+            break;
           case "text_delta":
             setPending((current) =>
               current.map((item) =>
