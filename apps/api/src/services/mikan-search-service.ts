@@ -8,6 +8,20 @@ import type { MediaBackend } from "../integrations/moviepilot.js";
 import type { MikanPage } from "../integrations/mikan.js";
 
 export const MIKAN_PAGE_SIZE = 20;
+export type MikanResults = Extract<View, { kind: "mikan" }>;
+export type MikanAgentPage = Omit<MikanResults, "items"> & {
+  items: Array<Omit<MikanResourceSummary, "id"> & { ref: string }>;
+};
+
+export function mikanAgentPage(view: MikanResults): MikanAgentPage {
+  return {
+    ...view,
+    items: view.items.map(({ id: _id, ...resource }, index) => ({
+      ref: `m${view.offset + index + 1}`,
+      ...resource,
+    })),
+  };
+}
 
 export function publicMikanResource({
   downloadUrl: _url,
@@ -53,7 +67,7 @@ export class MikanSearchService {
     return snapshot;
   }
 
-  private view(snapshot: MikanSnapshot, offset: number): View {
+  private view(snapshot: MikanSnapshot, offset: number): MikanResults {
     return {
       kind: "mikan",
       searchId: snapshot.id,
@@ -66,8 +80,19 @@ export class MikanSearchService {
     };
   }
 
-  listResources(identity: Identity, searchId: string, offset: number): View {
+  listResources(identity: Identity, searchId: string, offset: number): MikanResults {
     return this.view(this.getSnapshot(identity, searchId), offset);
+  }
+
+  resourceIdsForRefs(identity: Identity, searchId: string, refs: string[]): string[] {
+    const snapshot = this.getSnapshot(identity, searchId);
+    return refs.map((ref) => {
+      const resource = snapshot.resources[Number(ref.slice(1)) - 1];
+      if (!resource) {
+        throw new ConflictError(`资源引用 ${ref} 不在这份蜜柑结果中，请重新读取列表`);
+      }
+      return resource.id;
+    });
   }
 
   select(identity: Identity, searchId: string, ids: string[]): MikanResource[] {
@@ -81,7 +106,11 @@ export class MikanSearchService {
     });
   }
 
-  async search(query: MikanQuery, context: ToolContext, signal?: AbortSignal): Promise<View> {
+  async search(
+    query: MikanQuery,
+    context: ToolContext,
+    signal?: AbortSignal,
+  ): Promise<MikanResults> {
     for (const task of this.store.listTasks(context.userId, context.conversationId)) {
       if (
         task.state === "awaiting_confirmation" &&

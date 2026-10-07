@@ -8,11 +8,12 @@ import type { UserAction, View } from "@mp-pi/contracts";
 import { fixture, input, mikanRelease } from "./fixtures.js";
 import { viewCard } from "../src/ui/feishu-cards.js";
 import { StateStore } from "../src/core/store.js";
+import { mikanAgentPage, type MikanAgentPage } from "../src/services/mikan-search-service.js";
 
 function action(value: UserAction, conversationId = "anime", userId = "owner") {
   return { ...input(randomUUID(), "执行所选操作", conversationId, userId), action: value };
 }
-function result(context: TranscriptContext): View {
+function result<T = View>(context: TranscriptContext): T {
   const message = context.messages.at(-1);
   assert.ok(message?.role === "toolResult" && !message.isError);
   const block = message.content.find((item) => item.type === "text");
@@ -39,7 +40,7 @@ test("Pi directly searches Chinese Mikan releases and previews selected episodes
       }),
     ),
     (context) => {
-      const view = result(context);
+      const view = result<MikanAgentPage>(context);
       assert.ok(view.kind === "mikan");
       assert.equal(view.received, 4);
       assert.equal(view.total, 2);
@@ -47,11 +48,11 @@ test("Pi directly searches Chinese Mikan releases and previews selected episodes
         view.items.map((item) => item.tags.episodes),
         [[1], [2]],
       );
-      assert.doesNotMatch(JSON.stringify(view), /downloadUrl|magnet:/);
+      assert.doesNotMatch(JSON.stringify(view), /downloadUrl|magnet:|"id":/);
       return fauxAssistantMessage(
         fauxToolCall("prepare_mikan_download", {
           searchId: view.searchId,
-          resourceIds: view.items.map((item) => item.id),
+          resourceRefs: view.items.map((item) => item.ref),
         }),
       );
     },
@@ -83,6 +84,144 @@ test("Pi directly searches Chinese Mikan releases and previews selected episodes
   assert.equal(f.backend.submitCalls, 1);
   assert.equal(f.backend.submittedLinks.length, 2);
   assert.notEqual(f.backend.submittedLinks[0], f.backend.submittedLinks[1]);
+});
+
+test("Pi previews all twelve dual-subtitle episodes across pages using snapshot refs", async (t) => {
+  const f = await fixture(t);
+  f.backend.mikanReleases = Array.from({ length: 36 }, (_, index) => {
+    const episode = 12 - Math.floor(index / 3);
+    const version = ["简繁内封字幕", "简体", "繁体"][index % 3];
+    return mikanRelease(
+      `[字幕组] 作品 - ${String(episode).padStart(2, "0")} [1080p][${version}]`,
+      index,
+    );
+  });
+  const pages: MikanAgentPage[] = [];
+  f.faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("search_mikan", { keyword: "作品" })),
+    (context) => {
+      const page = result<MikanAgentPage>(context);
+      pages.push(page);
+      assert.equal(page.items[0]?.ref, "m1");
+      return fauxAssistantMessage(
+        fauxToolCall("list_mikan_resources", { searchId: page.searchId, offset: 20 }),
+      );
+    },
+    (context) => {
+      const page = result<MikanAgentPage>(context);
+      pages.push(page);
+      assert.equal(page.items[0]?.ref, "m21");
+      const selected = pages
+        .flatMap((item) => item.items)
+        .filter(
+          (item) => item.tags.subtitles.includes("CHS") && item.tags.subtitles.includes("CHT"),
+        );
+      assert.equal(selected.length, 12);
+      return fauxAssistantMessage(
+        fauxToolCall("prepare_mikan_download", {
+          searchId: page.searchId,
+          resourceRefs: selected.map((item) => item.ref),
+        }),
+      );
+    },
+    (context) => {
+      const view = result(context);
+      assert.ok(view.kind === "confirmation");
+      assert.equal(view.task.downloadItems?.length, 12);
+      assert.deepEqual(
+        view.task.downloadItems?.map((item) => item.tags.episodes?.[0]),
+        [12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+      );
+      return fauxAssistantMessage("十二集预览已生成，请核对。");
+    },
+  ]);
+  const reply = await f.handle(input("batch", "简繁内封，全12集", "anime"));
+  assert.equal(f.backend.submitCalls, 0);
+  assert.equal(f.backend.resolvedUrls.length, 12);
+  const view = reply.views.find((item) => item.kind === "mikan");
+  assert.ok(view?.kind === "mikan");
+  assert.ok(view.items.every((item) => item.id.length === 64));
+});
+
+test("refs preserve their meaning after pagination and restart, and reject foreign, stale or missing targets", async (t) => {
+  const f = await fixture(t);
+  f.backend.mikanReleases = Array.from({ length: 36 }, (_, index) =>
+    mikanRelease(`作品 [${index + 1}][1080p][CHS]`, index),
+  );
+  const reply = await f.handle(action({ type: "mikan_search", query: { keyword: "作品" } }));
+  const view = reply.views[0];
+  assert.ok(view?.kind === "mikan");
+  const identity = input("x", "", "anime");
+  const otherPage = mikanAgentPage(f.runtime.mikan.listResources(identity, view.searchId, 20));
+  assert.equal(otherPage.items[0]?.ref, "m21");
+  await f.reopen();
+  assert.deepEqual(
+    f.runtime.mikan.resourceIdsForRefs(identity, view.searchId, ["m1", "m21", "m36"]),
+    [0, 20, 35].map((index) => f.backend.mikanReleases[index]!.id),
+  );
+  assert.throws(
+    () => f.runtime.mikan.resourceIdsForRefs(identity, view.searchId, ["m37"]),
+    /不在这份蜜柑结果/,
+  );
+  assert.throws(
+    () =>
+      f.runtime.mikan.resourceIdsForRefs({ ...identity, userId: "another-user" }, view.searchId, [
+        "m1",
+      ]),
+    /失效/,
+  );
+  assert.throws(
+    () =>
+      f.runtime.mikan.resourceIdsForRefs(
+        { ...identity, conversationId: "another-chat" },
+        view.searchId,
+        ["m1"],
+      ),
+    /失效/,
+  );
+  await f.handle(action({ type: "mikan_search", query: { keyword: "另一部" } }));
+  assert.throws(() => f.runtime.mikan.resourceIdsForRefs(identity, view.searchId, ["m1"]), /失效/);
+  assert.equal(f.backend.resolvedUrls.length, 0);
+  assert.equal(f.backend.submitCalls, 0);
+});
+
+test("invalid refs and the old hash parameter cannot reach torrent resolution or create partial previews", async (t) => {
+  const f = await fixture(t);
+  const reply = await f.handle(action({ type: "mikan_search", query: { keyword: "作品" } }));
+  const view = reply.views[0];
+  assert.ok(view?.kind === "mikan");
+  const invalid: Array<Record<string, string[]>> = [
+    { resourceRefs: ["m0"] },
+    { resourceRefs: ["m01"] },
+    { resourceRefs: ["m37"] },
+    { resourceRefs: ["a".repeat(40)] },
+    { resourceIds: ["a".repeat(40)] },
+  ];
+  for (const selection of invalid) {
+    f.faux.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall("prepare_mikan_download", { searchId: view.searchId, ...selection }),
+      ),
+      (context) => {
+        const message = context.messages.at(-1);
+        assert.ok(message?.role === "toolResult" && message.isError);
+        return fauxAssistantMessage("资源引用无效。");
+      },
+    ]);
+    await f.handle(input(randomUUID(), "预览选择", "anime"));
+    assert.equal(f.backend.resolvedUrls.length, 0);
+    assert.equal(f.runtime.store.listTasks("owner", "anime").length, 0);
+  }
+  f.faux.setResponses([
+    fauxAssistantMessage(
+      fauxToolCall("prepare_mikan_download", { searchId: view.searchId, resourceRefs: ["m1"] }),
+    ),
+    fauxAssistantMessage("有效资源已生成预览。"),
+  ]);
+  await f.handle(input(randomUUID(), "选择 m1", "anime"));
+  assert.equal(f.backend.resolvedUrls.length, 1);
+  assert.equal(f.runtime.store.listTasks("owner", "anime").length, 1);
+  assert.equal(f.backend.submitCalls, 0);
 });
 
 test("Mikan snapshots reject stale or foreign selection and a new query cancels its pending proposal", async (t) => {

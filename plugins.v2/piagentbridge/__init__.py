@@ -41,7 +41,7 @@ class PiAgentBridge(_PluginBase):
     plugin_name = "Pi Agent 媒体助手"
     plugin_desc = "安装、配置和管理 Pi 媒体助手；网页、飞书共用同一个会话核心。"
     plugin_icon = "ChatGPT_A.png"
-    plugin_version = "1.3.0"
+    plugin_version = "1.3.1"
     plugin_author = "Tsutomu-miku"
     author_url = "https://github.com/Tsutomu-miku"
     plugin_config_prefix = "piagentbridge_"
