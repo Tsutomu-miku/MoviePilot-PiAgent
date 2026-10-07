@@ -7,6 +7,7 @@ import type { PendingReply } from "../hooks/useChat";
 import { MessageViews } from "./MessageViews";
 import { Dialog } from "./Dialog";
 import { MikanSearchForm } from "./MikanSearchForm";
+import { AssistantContent } from "./AssistantContent";
 
 interface Props {
   conversationId: string;
@@ -26,8 +27,24 @@ export function Chat({ conversationId, api, pending, selectedSkill, onClearSkill
   const [linksOpen, setLinksOpen] = useState(false);
   const [mikanOpen, setMikanOpen] = useState(false);
   const [links, setLinks] = useState("");
+  const [collapsedThinking, setCollapsedThinking] = useState(() => new Set<string>());
+  function onThinkingToggle(id: string, open: boolean) {
+    setCollapsedThinking((current) => {
+      if (current.has(id) === !open) {
+        return current;
+      }
+      const next = new Set(current);
+      if (open) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
   const tasks = useQuery({ queryKey: ["tasks"], queryFn: () => api.tasks() });
   const bottom = useRef<HTMLDivElement>(null);
+  const followOutput = useRef(true);
   const active = pending.filter((item) => item.conversationId === conversationId);
   const activeIds = new Set(
     active.flatMap((item) => [item.user.id, messageId(item.id, "assistant")]),
@@ -47,8 +64,14 @@ export function Chat({ conversationId, api, pending, selectedSkill, onClearSkill
     .filter((view) => view.kind === "transfer_failures")
     .at(-1)?.searchId;
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.data, active.length]);
+    if (followOutput.current) {
+      bottom.current?.scrollIntoView({ block: "end" });
+    }
+  }, [messages.data, pending]);
+  useEffect(() => {
+    followOutput.current = true;
+    bottom.current?.scrollIntoView({ block: "end" });
+  }, [conversationId]);
   const onAction = (action: UserAction, label: string) => onSend(label, action);
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -67,7 +90,16 @@ export function Chat({ conversationId, api, pending, selectedSkill, onClearSkill
   }
   return (
     <section className="chat-panel" aria-label="Agent 对话">
-      <div className="chat-history" aria-live="polite" aria-busy={busy}>
+      <div
+        className="chat-history"
+        aria-live="polite"
+        aria-busy={busy}
+        onScroll={(event) => {
+          const history = event.currentTarget;
+          followOutput.current =
+            history.scrollHeight - history.scrollTop - history.clientHeight < 80;
+        }}
+      >
         {messages.isPending && <p className="muted">正在加载会话…</p>}
         {messages.error && (
           <p role="alert" className="error">
@@ -94,7 +126,16 @@ export function Chat({ conversationId, api, pending, selectedSkill, onClearSkill
         {history.map((message) => (
           <article className={`message message-${message.role}`} key={message.id}>
             <div className="message-label">{message.role === "user" ? "你" : "Pi Agent"}</div>
-            <p className="message-text">{message.text}</p>
+            {message.role === "assistant" ? (
+              <AssistantContent
+                text={message.text}
+                transcript={message.transcript}
+                collapsedThinking={collapsedThinking}
+                onThinkingToggle={onThinkingToggle}
+              />
+            ) : (
+              <p className="message-text">{message.text}</p>
+            )}
             <MessageViews
               views={message.views}
               api={api}
@@ -116,7 +157,12 @@ export function Chat({ conversationId, api, pending, selectedSkill, onClearSkill
             </article>
             <article className="message message-assistant">
               <div className="message-label">Pi Agent · {item.status}</div>
-              <p className="message-text">{item.text}</p>
+              <AssistantContent
+                text=""
+                transcript={item.transcript}
+                collapsedThinking={collapsedThinking}
+                onThinkingToggle={onThinkingToggle}
+              />
             </article>
           </Fragment>
         ))}

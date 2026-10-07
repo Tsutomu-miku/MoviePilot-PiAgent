@@ -1,7 +1,13 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { DisplayMessage, TaskSummary, UserAction, View } from "@mp-pi/contracts";
-import { messageId } from "@mp-pi/contracts";
+import type {
+  DisplayMessage,
+  TaskSummary,
+  TranscriptBlock,
+  UserAction,
+  View,
+} from "@mp-pi/contracts";
+import { applyTranscriptEvent, messageId } from "@mp-pi/contracts";
 import { v4 as uuid } from "uuid";
 import { ApiClient } from "../api";
 
@@ -9,7 +15,7 @@ export interface PendingReply {
   id: string;
   conversationId: string;
   user: DisplayMessage;
-  text: string;
+  transcript: TranscriptBlock[];
   status: string;
 }
 
@@ -33,9 +39,10 @@ export function useChat(api: ApiClient) {
         role: "user",
         text,
         views: [],
+        transcript: [],
         createdAt: new Date().toISOString(),
       },
-      text: "",
+      transcript: [],
       status: "等待处理…",
     };
     setError("");
@@ -44,12 +51,14 @@ export function useChat(api: ApiClient) {
       setPending((current) =>
         current.map((item) => (item.id === requestId ? { ...item, ...patch } : item)),
       );
-    const finish = async (replyText: string, views: View[]) => {
+    let transcript: TranscriptBlock[] = [];
+    const finish = async (replyText: string, views: View[], blocks: TranscriptBlock[]) => {
       const assistant: DisplayMessage = {
         id: messageId(requestId, "assistant"),
         role: "assistant",
         text: replyText,
         views,
+        transcript: blocks,
         createdAt: new Date().toISOString(),
       };
       await client.cancelQueries({ queryKey: ["messages", conversationId] });
@@ -79,31 +88,42 @@ export function useChat(api: ApiClient) {
     };
     try {
       for await (const event of api.send(conversationId, { requestId, text, action, skillName })) {
+        const next = applyTranscriptEvent(transcript, event);
+        if (next !== transcript) {
+          transcript = next;
+          update({ transcript });
+        }
         switch (event.type) {
           case "text_start":
-            update({ text: "", status: "正在回复…" });
+            update({ status: "正在回复…" });
             break;
-          case "text_delta":
-            setPending((current) =>
-              current.map((item) =>
-                item.id === requestId
-                  ? { ...item, text: item.text + event.text, status: "正在回复…" }
-                  : item,
-              ),
-            );
+          case "block_start":
+            update({ status: event.block.type === "thinking" ? "正在思考…" : "正在回复…" });
             break;
           case "tool_start":
             update({ status: "正在执行所需操作…" });
             break;
           case "reply":
-            await finish(event.reply.text, event.reply.views);
+            await finish(event.reply.text, event.reply.views, event.reply.transcript);
             return;
         }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "请求失败";
       setError(message);
-      await finish(message, []);
+      await finish(
+        message,
+        [],
+        [
+          ...transcript.map(
+            (block): TranscriptBlock =>
+              block.type === "tool" && block.state === "running"
+                ? { ...block, state: "failed", output: "执行中断，请核对任务状态。" }
+                : block,
+          ),
+          { id: `${requestId}:error`, type: "text", text: message },
+        ],
+      );
     } finally {
       await Promise.all([
         client.invalidateQueries({ queryKey: ["messages", conversationId] }),

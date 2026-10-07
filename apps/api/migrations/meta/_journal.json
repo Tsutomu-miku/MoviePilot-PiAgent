@@ -16,6 +16,13 @@
       "when": 1791380000000,
       "tag": "0002_mikan",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791410000000,
+      "tag": "0003_transcript",
+      "breakpoints": true
     }
   ]
 }

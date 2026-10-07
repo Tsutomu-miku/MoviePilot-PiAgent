@@ -24,6 +24,16 @@ async function login(page: Page) {
   await createConversation(page);
 }
 
+async function expandResults(page: Page, title: string) {
+  const card = page
+    .locator(".result-card")
+    .filter({ has: page.locator("summary > strong", { hasText: title }) })
+    .last();
+  await expect(card).not.toHaveAttribute("open");
+  await card.locator(":scope > summary").click();
+  await expect(card).toHaveAttribute("open");
+}
+
 test("MP hosted page uses its login and relative assets without a second access token", async ({
   page,
 }) => {
@@ -110,8 +120,10 @@ test("search, refine, preview and confirm a download; inspect shared task state"
   await login(page);
   await page.getByLabel("消息").fill("搜索哈姆奈特");
   await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expandResults(page, "媒体搜索结果");
   await expect(page.getByRole("button", { name: "搜索资源", exact: true }).last()).toBeEnabled();
   await page.getByRole("button", { name: "搜索资源", exact: true }).last().click();
+  await expandResults(page, "资源搜索结果");
   const resources = page.getByLabel("资源搜索结果").last();
   await expect(resources.getByText("匹配 2 条")).toBeVisible();
   await resources.getByText("筛选与排序条件").click();
@@ -119,6 +131,7 @@ test("search, refine, preview and confirm a download; inspect shared task state"
   await resources.getByLabel("声道", { exact: true }).selectOption("5.1");
   await resources.getByLabel("音频", { exact: true }).selectOption("DDP");
   await resources.getByRole("button", { name: "更新筛选" }).click();
+  await expandResults(page, "资源搜索结果");
   const filtered = page.getByLabel("资源搜索结果").last();
   await expect(filtered.getByText("匹配 1 条")).toBeVisible();
   await expect(
@@ -187,7 +200,7 @@ test("a preview cancelled in the same reply leaves one cancelled result without 
   await expect(page.locator(".chat-history .task")).toHaveCount(1);
   await expect(page.locator(".chat-history .status")).toHaveText("已取消");
   await expect(page.getByRole("button", { name: "确认执行", exact: true })).toHaveCount(0);
-  await expect(page.locator(".chat-history")).not.toContainText("先生成一份预览。");
+  await expect(page.getByText("先生成一份预览。", { exact: true })).toBeVisible();
 });
 
 test("cards appear once after the final reply and queued turns keep their position during slow history refresh", async ({
@@ -216,6 +229,17 @@ test("cards appear once after the final reply and queued turns keep their positi
     .poll(async () => (await (await page.request.get("/test/reply-gate")).json()).previewReady)
     .toBe(true);
   await expect(page.locator(".chat-history .task")).toHaveCount(0);
+  await expect(page.getByText("我先准备预览。", { exact: true })).toBeVisible();
+  await expect(page.getByText("先解析链接，生成预览后再等待确认。", { exact: true })).toBeVisible();
+  const tool = page
+    .locator(".tool-block")
+    .filter({ has: page.locator("code", { hasText: "prepare_links" }) });
+  await expect(tool.locator(".tool-state")).toHaveText("已完成");
+  await expect(tool).not.toHaveAttribute("open");
+  await tool.locator(":scope > summary").click();
+  await expect(tool.locator(".tool-detail")).toContainText("awaiting_confirmation");
+  await page.locator(".thinking-block > summary").click();
+  await expect(page.locator(".thinking-block")).not.toHaveAttribute("open");
   await expect(page.getByRole("button", { name: "确认执行", exact: true })).toHaveCount(0);
   await page.getByLabel("消息").fill("补充条件");
   await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -238,6 +262,7 @@ test("cards appear once after the final reply and queued turns keep their positi
     await expect(page.getByText("最终预览已生成。", { exact: true })).toHaveCount(1);
     await expect(page.locator(".chat-history .task")).toHaveCount(1);
     await expect(page.getByRole("button", { name: "确认执行", exact: true })).toBeEnabled();
+    await expect(page.locator(".thinking-block")).not.toHaveAttribute("open");
     await expect(page.locator(".chat-history .message-user .message-text")).toHaveText([
       "卡片时机测试",
       "补充条件",
@@ -254,6 +279,26 @@ test("cards appear once after the final reply and queued turns keep their positi
   await page.reload();
   await expect(page.getByText("最终预览已生成。", { exact: true })).toHaveCount(1);
   await expect(page.locator(".chat-history .task")).toHaveCount(1);
+  await expect(page.getByText("我先准备预览。", { exact: true })).toBeVisible();
+  await expect(page.getByText("先解析链接，生成预览后再等待确认。", { exact: true })).toBeVisible();
+  await expect(tool.locator(".tool-state")).toHaveText("已完成");
+  await expect(tool).not.toHaveAttribute("open");
+  await page.locator(".chat-history").evaluate((history) => {
+    history.scrollTop = 0;
+  });
+  await page.screenshot({
+    path: "test-results/conversation-transcript-desktop.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator(".chat-history").evaluate((history) => {
+    history.scrollTop = 0;
+  });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  await page.screenshot({
+    path: "test-results/conversation-transcript-mobile.png",
+    fullPage: true,
+  });
 });
 
 test("mobile layout preserves conversation and exposes usable controls", async ({ page }) => {
@@ -284,6 +329,7 @@ test("select failed organization records, inspect the plan and confirm one batch
   await login(page);
   await page.locator(".composer").getByRole("button", { name: "整理失败", exact: true }).click();
   await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
+  await expandResults(page, "整理失败记录");
   const records = page.getByLabel("整理失败记录").last();
   await expect(records.getByText("整理失败 · 共 2 条")).toBeVisible();
   await records.getByLabel("选择整理记录 101").check();
@@ -291,7 +337,10 @@ test("select failed organization records, inspect the plan and confirm one batch
   await records.getByRole("button", { name: "预览所选记录" }).click();
   await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
   await expect(page.getByLabel("整理批次明细")).toContainText("哈姆奈特.101.mkv");
+  await expect(page.getByLabel("整理批次明细")).not.toBeVisible();
   await expect(page.getByRole("button", { name: "确认执行", exact: true })).toBeEnabled();
+  await page.locator(".task-details > summary").last().click();
+  await expect(page.getByLabel("整理批次明细")).toBeVisible();
   await page.getByRole("button", { name: "确认执行", exact: true }).click();
   await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
   await page
@@ -365,11 +414,13 @@ test("Mikan direct search filters releases, invalidates old choices and previews
   await dialog.getByRole("button", { name: "搜索蜜柑", exact: true }).click();
   await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
   const results = page.getByLabel("蜜柑搜索结果").last();
+  await expandResults(page, "蜜柑搜索结果");
   await expect(results).toContainText("本次 RSS 返回 4 条，筛选后 4 条。");
   await results.getByLabel("字幕组", { exact: true }).fill("喵萌奶茶屋");
   await results.getByLabel("字幕", { exact: true }).selectOption("CHS");
   await results.getByLabel("分辨率", { exact: true }).selectOption("1080p");
   await results.getByRole("button", { name: "搜索蜜柑", exact: true }).click();
+  await expandResults(page, "蜜柑搜索结果");
   const filtered = page.getByLabel("蜜柑搜索结果").last();
   await expect(filtered).toContainText("本次 RSS 返回 4 条，筛选后 2 条。");
   await expect(
@@ -382,6 +433,9 @@ test("Mikan direct search filters releases, invalidates old choices and previews
   await expect(page.getByLabel("下载资源明细")).toContainText("花织同学 [01]");
   await expect(page.getByLabel("下载资源明细")).toContainText("花织同学 [02]");
   await expect(page.getByRole("button", { name: "确认执行", exact: true })).toBeEnabled();
+  await expect(page.getByLabel("下载资源明细")).not.toBeVisible();
+  await page.locator(".task-details > summary").last().click();
+  await expect(page.getByLabel("下载资源明细")).toBeVisible();
   await page.screenshot({ path: "test-results/mikan-preview-desktop.png", fullPage: true });
   await page.getByRole("button", { name: "确认执行", exact: true }).click();
   await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");

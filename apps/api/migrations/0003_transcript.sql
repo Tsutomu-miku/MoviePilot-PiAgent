@@ -1,0 +1,1 @@
+ALTER TABLE messages ADD COLUMN transcript TEXT NOT NULL DEFAULT '[]';

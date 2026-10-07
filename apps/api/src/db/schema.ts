@@ -1,5 +1,11 @@
 import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import type { AgentReply, MessageInput, Preferences, View } from "@mp-pi/contracts";
+import type {
+  AgentReply,
+  MessageInput,
+  Preferences,
+  View,
+  TranscriptBlock,
+} from "@mp-pi/contracts";
 import type {
   Media,
   SearchSnapshot,
@@ -40,6 +46,7 @@ export const messages = sqliteTable("messages", {
   role: text("role", { enum: ["user", "assistant"] }).notNull(),
   text: text("text").notNull(),
   views: text("views", { mode: "json" }).$type<View[]>().notNull(),
+  transcript: text("transcript", { mode: "json" }).$type<TranscriptBlock[]>().notNull().default([]),
   createdAt: text("created_at").notNull(),
 });
 export const preferences = sqliteTable("preferences", {

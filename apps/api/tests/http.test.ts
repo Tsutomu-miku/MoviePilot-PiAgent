@@ -140,7 +140,13 @@ test("HTTP streams Pi events, persists history and replays a duplicate reply wit
 test("shared SSE decoder handles split UTF-8 and frame boundaries and detects incomplete streams", async () => {
   const reply: UiEvent = {
     type: "reply",
-    reply: { conversationId: "conversation", requestId: "r", text: "哈姆奈特", views: [] },
+    reply: {
+      conversationId: "conversation",
+      requestId: "r",
+      text: "哈姆奈特",
+      views: [],
+      transcript: [],
+    },
   };
   const bytes = new TextEncoder().encode(`: heartbeat\n\ndata: ${JSON.stringify(reply)}\n\n`);
   const stream = new ReadableStream<Uint8Array>({

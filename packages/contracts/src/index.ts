@@ -267,18 +267,45 @@ export interface AgentInput extends MessageInput {
   userId: string;
   conversationId: string;
 }
+export const transcriptBlockSchema = z.discriminatedUnion("type", [
+  z.object({ id: z.string(), type: z.literal("text"), text: z.string() }),
+  z.object({ id: z.string(), type: z.literal("thinking"), text: z.string() }),
+  z.object({
+    id: z.string(),
+    type: z.literal("tool"),
+    name: z.string(),
+    input: z.string(),
+    output: z.string(),
+    state: z.enum(["running", "completed", "failed"]),
+  }),
+]);
+export type TranscriptBlock = z.infer<typeof transcriptBlockSchema>;
 export const agentReplySchema = z.object({
   conversationId: z.string(),
   requestId: z.string(),
   text: z.string(),
   views: z.array(viewSchema),
+  transcript: z.array(transcriptBlockSchema).default([]),
 });
 export type AgentReply = z.infer<typeof agentReplySchema>;
 export const uiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text_start") }),
   z.object({ type: z.literal("text_delta"), text: z.string() }),
-  z.object({ type: z.literal("tool_start"), name: z.string() }),
-  z.object({ type: z.literal("tool_end"), name: z.string(), failed: z.boolean() }),
+  z.object({ type: z.literal("block_start"), block: transcriptBlockSchema }),
+  z.object({ type: z.literal("block_delta"), id: z.string(), text: z.string() }),
+  z.object({
+    type: z.literal("tool_start"),
+    id: z.string(),
+    name: z.string(),
+    input: z.string(),
+  }),
+  z.object({
+    type: z.literal("tool_end"),
+    id: z.string(),
+    name: z.string(),
+    failed: z.boolean(),
+    output: z.string(),
+  }),
   z.object({ type: z.literal("reply"), reply: agentReplySchema }),
   z.object({ type: z.literal("error"), message: z.string() }),
 ]);
@@ -297,6 +324,7 @@ export const displayMessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
   text: z.string(),
   views: z.array(viewSchema),
+  transcript: z.array(transcriptBlockSchema).default([]),
   createdAt: z.string(),
 });
 export type DisplayMessage = z.infer<typeof displayMessageSchema>;
@@ -317,3 +345,4 @@ export const stateLabels: Record<TaskState, string> = {
 };
 
 export { decodeUiStream } from "./stream.js";
+export { applyTranscriptEvent } from "./transcript.js";

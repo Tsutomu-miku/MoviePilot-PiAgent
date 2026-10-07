@@ -68,7 +68,7 @@ export async function createApp(options: AppOptions) {
   });
   const identity = (id: string) => ({ userId: options.ownerId, conversationId: id });
 
-  app.get("/api/health", async () => ({ status: "ok", version: "1.3.1" }));
+  app.get("/api/health", async () => ({ status: "ok", version: "1.3.2" }));
   app.get("/api/skills", async () => options.runtime.skills.list(options.ownerId));
   app.get("/api/skills/:name", async (request) => {
     const { name } = skillParams.parse(request.params);
@@ -98,7 +98,7 @@ export async function createApp(options: AppOptions) {
   });
   app.get("/api/conversations/:id/messages", async (request) => {
     const { id } = conversationParams.parse(request.params);
-    return options.runtime.store.getMessages(identity(id));
+    return options.runtime.getMessages(identity(id));
   });
   app.post("/api/conversations/:id/messages", async (request, reply) => {
     const { id } = conversationParams.parse(request.params);

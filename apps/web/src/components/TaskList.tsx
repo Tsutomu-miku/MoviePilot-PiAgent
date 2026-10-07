@@ -21,41 +21,53 @@ export function TaskList({ items, busy = false, onAction }: Props) {
             {new Date(task.createdAt).toLocaleString()}
           </p>
           <p>{task.message}</p>
-          {task.downloadItems && (
-            <ul aria-label="下载资源明细">
-              {task.downloadItems.map((item) => (
-                <li key={item.id}>
-                  <a href={item.sourceUrl} target="_blank" rel="noreferrer">
-                    {item.title}
-                  </a>
-                  <p className="muted">
-                    {item.sizeGiB} GiB · {item.tags.subtitles.join(" / ")}
-                    {item.tags.episodes?.length ? ` · 集数 ${item.tags.episodes.join(", ")}` : ""}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          )}
-          {task.transferItems && (
-            <ul aria-label="整理批次明细">
-              {task.transferItems.map((item) => (
-                <li key={item.historyId}>
-                  <strong>
-                    #{item.historyId} · {item.filename}
-                  </strong>
-                  <p>{item.title}</p>
-                  <ul>
-                    {item.files.map((file, index) => (
-                      <li key={index}>
-                        {file.filename} → {file.targetFilename}
-                      </li>
-                    ))}
-                  </ul>
-                  <p>{item.message}</p>
-                  {item.cleanupTarget && <small>此计划包含残留目标清理</small>}
-                </li>
-              ))}
-            </ul>
+          {(task.downloadItems || task.transferItems) && (
+            <details className="task-details">
+              <summary>
+                查看明细 ·{" "}
+                {task.downloadItems
+                  ? `${task.downloadItems.length} 个资源`
+                  : `${task.transferItems!.length} 条整理记录`}
+              </summary>
+              {task.downloadItems && (
+                <ul aria-label="下载资源明细">
+                  {task.downloadItems.map((item) => (
+                    <li key={item.id}>
+                      <a href={item.sourceUrl} target="_blank" rel="noreferrer">
+                        {item.title}
+                      </a>
+                      <p className="muted">
+                        {item.sizeGiB} GiB · {item.tags.subtitles.join(" / ")}
+                        {item.tags.episodes?.length
+                          ? ` · 集数 ${item.tags.episodes.join(", ")}`
+                          : ""}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {task.transferItems && (
+                <ul aria-label="整理批次明细">
+                  {task.transferItems.map((item) => (
+                    <li key={item.historyId}>
+                      <strong>
+                        #{item.historyId} · {item.filename}
+                      </strong>
+                      <p>{item.title}</p>
+                      <ul>
+                        {item.files.map((file, index) => (
+                          <li key={index}>
+                            {file.filename} → {file.targetFilename}
+                          </li>
+                        ))}
+                      </ul>
+                      <p>{item.message}</p>
+                      {item.cleanupTarget && <small>此计划包含残留目标清理</small>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </details>
           )}
           {task.progress !== undefined && (
             <div className="progress-row">

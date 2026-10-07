@@ -12,6 +12,7 @@ import type {
   DisplayMessage,
   Preferences,
   View,
+  TranscriptBlock,
 } from "@mp-pi/contracts";
 import { messageId } from "@mp-pi/contracts";
 import type {
@@ -180,6 +181,7 @@ export class StateStore {
     role: DisplayMessage["role"],
     text: string,
     views: View[] = [],
+    transcript: TranscriptBlock[] = [],
   ): void {
     const now = new Date().toISOString();
     if (role === "user") {
@@ -198,6 +200,7 @@ export class StateStore {
         role,
         text,
         views,
+        transcript,
         createdAt: now,
       })
       .run();
@@ -222,7 +225,14 @@ export class StateStore {
       .limit(300)
       .all()
       .reverse()
-      .map(({ id, role, text, views, createdAt }) => ({ id, role, text, views, createdAt }));
+      .map(({ id, role, text, views, transcript, createdAt }) => ({
+        id,
+        role,
+        text,
+        views,
+        transcript,
+        createdAt,
+      }));
   }
   getPreferences(userId: string): Preferences {
     return (

@@ -3,22 +3,27 @@ import {
   DefaultResourceLoader,
   ModelRuntime,
   SettingsManager,
+  type AgentToolResult,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   messageInputSchema,
+  applyTranscriptEvent,
   type AgentInput,
   type AgentReply,
   type UiAdapter,
   type UiEvent,
   type UserAction,
   type View,
+  type TranscriptBlock,
+  type DisplayMessage,
 } from "@mp-pi/contracts";
 import { StateStore } from "./store.js";
 import { ConflictError } from "./errors.js";
 import { finalizeReplyViews } from "./reply-views.js";
 import { systemPrompt } from "./system-prompt.js";
 import { ConversationQueue } from "./queue.js";
+import { conversationHistory } from "./history.js";
 import { SessionPool, conversationKey } from "./sessions.js";
 import { toolContext } from "./tools.js";
 import { createTools } from "../capabilities/index.js";
@@ -125,6 +130,10 @@ export class AgentRuntime {
     return this.skills.load(userId).skills.map((skill) => skill.name);
   }
 
+  getMessages(identity: Identity): DisplayMessage[] {
+    return conversationHistory(this.store, identity);
+  }
+
   handle(input: AgentInput, adapter?: UiAdapter): Promise<AgentReply> {
     if (this.closing) {
       return Promise.reject(new ConflictError("Agent 服务正在停止"));
@@ -208,7 +217,9 @@ export class AgentRuntime {
 
   private async process(input: AgentInput, adapter?: UiAdapter): Promise<AgentReply> {
     const saved = this.store.getRequest(input);
+    let transcript: TranscriptBlock[] = [];
     const publish = (event: UiEvent) => {
+      transcript = applyTranscriptEvent(transcript, event);
       try {
         adapter?.publish(input, event);
       } catch (error) {
@@ -238,20 +249,53 @@ export class AgentRuntime {
     this.abort.signal.throwIfAborted();
     this.store.beginRequest(input);
     this.store.addMessage(input, "user", input.text || "执行所选操作");
+    let segment = 0;
     const unsubscribe =
       execution.kind === "model"
         ? execution.session.subscribe((event) => {
             if (event.type === "message_start" && event.message.role === "assistant") {
+              segment += 1;
               publish({ type: "text_start" });
-            } else if (
-              event.type === "message_update" &&
-              event.assistantMessageEvent.type === "text_delta"
-            ) {
-              publish({ type: "text_delta", text: event.assistantMessageEvent.delta });
+            } else if (event.type === "message_update") {
+              const delta = event.assistantMessageEvent;
+              if (delta.type === "text_start" || delta.type === "thinking_start") {
+                publish({
+                  type: "block_start",
+                  block: {
+                    id: `${input.requestId}:${segment}:${delta.contentIndex}`,
+                    type: delta.type === "thinking_start" ? "thinking" : "text",
+                    text: "",
+                  },
+                });
+              } else if (delta.type === "text_delta" || delta.type === "thinking_delta") {
+                publish({
+                  type: "block_delta",
+                  id: `${input.requestId}:${segment}:${delta.contentIndex}`,
+                  text: delta.delta,
+                });
+                if (delta.type === "text_delta") {
+                  publish({ type: "text_delta", text: delta.delta });
+                }
+              }
             } else if (event.type === "tool_execution_start") {
-              publish({ type: "tool_start", name: event.toolName });
+              publish({
+                type: "tool_start",
+                id: event.toolCallId,
+                name: event.toolName,
+                input: JSON.stringify(event.args, null, 2),
+              });
             } else if (event.type === "tool_execution_end") {
-              publish({ type: "tool_end", name: event.toolName, failed: event.isError });
+              const result = event.result as AgentToolResult<unknown>;
+              publish({
+                type: "tool_end",
+                id: event.toolCallId,
+                name: event.toolName,
+                failed: event.isError,
+                output: result.content
+                  .filter((block) => block.type === "text")
+                  .map((block) => block.text)
+                  .join("\n"),
+              });
             }
           })
         : undefined;
@@ -283,18 +327,25 @@ export class AgentRuntime {
         conversationId: input.conversationId,
         requestId: input.requestId,
         text,
+        transcript,
         views: finalizeReplyViews(
           views,
           this.store.listTasks(input.userId, input.conversationId).map(publicTask),
         ),
       };
-      this.store.addMessage(input, "assistant", text, reply.views);
+      this.store.addMessage(input, "assistant", text, reply.views, transcript);
       this.store.finishRequest(input, reply);
       publish({ type: "reply", reply });
       return reply;
     } catch (error) {
       this.store.interruptRequest(input);
       const message = error instanceof Error ? error.message : "请求失败，请检查服务日志";
+      transcript = transcript.map((block) =>
+        block.type === "tool" && block.state === "running"
+          ? { ...block, state: "failed", output: "执行中断，请核对任务状态。" }
+          : block,
+      );
+      transcript.push({ id: `${input.requestId}:error`, type: "text", text: message });
       this.store.addMessage(
         input,
         "assistant",
@@ -303,6 +354,7 @@ export class AgentRuntime {
           views,
           this.store.listTasks(input.userId, input.conversationId).map(publicTask),
         ),
+        transcript,
       );
       publish({ type: "error", message });
       throw error;

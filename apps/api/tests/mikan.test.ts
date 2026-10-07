@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { fauxAssistantMessage, fauxToolCall, type TranscriptContext } from "@earendil-works/pi-ai";
 import type { UserAction, View } from "@mp-pi/contracts";
 import { fixture, input, mikanRelease } from "./fixtures.js";
@@ -336,13 +337,28 @@ test("adding the Mikan snapshot column preserves existing conversations, prefere
   const old = new StateStore(dataDir, oldMigrations);
   old.ensureConversation(identity, "原有会话");
   old.setPreferences("owner", { destination: "115" }, "明确默认要求");
-  old.addMessage({ ...identity, requestId: "original" }, "user", "原有消息");
   old.close();
+  const legacy = new Database(join(dataDir, "agent.sqlite"));
+  legacy
+    .prepare(
+      "INSERT INTO messages (id, user_id, conversation_id, role, text, views, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(
+      "original:user",
+      identity.userId,
+      identity.conversationId,
+      "user",
+      "原有消息",
+      "[]",
+      new Date().toISOString(),
+    );
+  legacy.close();
   const current = new StateStore(dataDir, migrations);
   try {
     assert.equal(current.getConversation(identity).title, "原有会话");
     assert.deepEqual(current.getPreferences("owner"), { destination: "115" });
     assert.equal(current.getMessages(identity)[0]?.text, "原有消息");
+    assert.deepEqual(current.getMessages(identity)[0]?.transcript, []);
     assert.equal(current.getMikanSearch(identity), undefined);
   } finally {
     current.close();

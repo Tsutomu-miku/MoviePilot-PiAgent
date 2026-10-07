@@ -7,6 +7,7 @@ import {
   fauxAssistantMessage,
   fauxToolCall,
   fauxText,
+  fauxThinking,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { AgentRuntime } from "../../apps/api/src/core/runtime.js";
@@ -48,6 +49,7 @@ async function respond(context: TranscriptContext) {
       return fauxAssistantMessage("最终预览已生成。");
     }
     return fauxAssistantMessage([
+      fauxThinking("先解析链接，生成预览后再等待确认。"),
       fauxText("我先准备预览。"),
       fauxToolCall("prepare_links", { links: `magnet:?xt=urn:btih:${"b".repeat(40)}` }),
     ]);
