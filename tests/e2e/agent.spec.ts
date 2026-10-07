@@ -1,11 +1,27 @@
 import { test, expect, type Page } from "@playwright/test";
 
+async function createConversation(page: Page) {
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.endsWith("/api/conversations") &&
+      response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "＋ 新建会话" }).click();
+  const response = await created;
+  expect(response.ok()).toBe(true);
+  const conversation = await response.json();
+  await expect(page.locator(".conversation-list button.selected")).toHaveAttribute(
+    "title",
+    conversation.id,
+  );
+  await expect(page.getByLabel("消息")).toBeVisible();
+}
+
 async function login(page: Page) {
   await page.goto("/");
   await page.getByLabel("访问令牌").fill("offline-browser-token-with-at-least-32-characters");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  await page.getByRole("button", { name: "＋ 新建会话" }).click();
-  await expect(page.getByLabel("消息")).toBeVisible();
+  await createConversation(page);
 }
 
 test("MP hosted page uses its login and relative assets without a second access token", async ({
@@ -19,9 +35,11 @@ test("MP hosted page uses its login and relative assets without a second access 
   await page.goto("http://127.0.0.1:8789/api/v1/plugin/PiAgentBridge/ui/");
   await expect(page.getByLabel("访问令牌")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "退出登录" })).toHaveCount(0);
-  await page.getByRole("button", { name: "＋ 新建会话" }).click();
+  await createConversation(page);
   await page.getByLabel("消息").fill("补充条件");
   await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
+  await expect(page.getByText("同一会话中已收到补充条件。", { exact: true })).toHaveCount(1);
   await expect(page.getByText("同一会话中已收到补充条件。", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => sessionStorage.getItem("pi-agent-token"))).toBeNull();
   expect(errors).toEqual([]);
@@ -76,6 +94,8 @@ test("paste links to 115 and save or clear future defaults", async ({ page }) =>
   await page.locator(".composer").getByRole("button", { name: "粘贴链接到 115" }).click();
   await page.getByLabel("种子链接").fill(`magnet:?xt=urn:btih:${"a".repeat(40)}`);
   await page.getByRole("button", { name: "预览", exact: true }).click();
+  await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
+  await expect(page.getByText("1 个链接推送到 115", { exact: true })).toHaveCount(1);
   await expect(page.getByText("1 个链接推送到 115", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "确认执行" })).toBeEnabled();
   await page.getByRole("button", { name: "取消", exact: true }).click();
@@ -115,6 +135,8 @@ test("mobile layout preserves conversation and exposes usable controls", async (
   expect(overflow).toBe(false);
   await page.getByLabel("消息").fill("补充条件");
   await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
+  await expect(page.getByText("同一会话中已收到补充条件。", { exact: true })).toHaveCount(1);
   await expect(page.getByText("同一会话中已收到补充条件。", { exact: true })).toBeVisible();
   await page.screenshot({ path: "test-results/chat-mobile.png", fullPage: true });
 });
