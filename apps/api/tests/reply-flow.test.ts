@@ -6,7 +6,7 @@ import {
   fauxToolCall,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import type { View, UiEvent } from "@mp-pi/contracts";
+import { messageId, type View, type UiEvent } from "@mp-pi/contracts";
 import { fixture, input, media } from "./fixtures.js";
 
 function latestResult(context: TranscriptContext): View {
@@ -26,6 +26,41 @@ function cancelPreview(context: TranscriptContext) {
   assert.ok(view.kind === "confirmation");
   return fauxAssistantMessage(fauxToolCall("cancel_task", { taskId: view.task.id }));
 }
+
+test("cards remain staged until the final reply, which shares stable IDs with persisted messages", async (t) => {
+  const f = await fixture(t);
+  const events: UiEvent[] = [];
+  let release!: () => void;
+  let started!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const reachedFinal = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  f.faux.setResponses([
+    prepareLinks("a"),
+    async () => {
+      started();
+      await waiting;
+      return fauxAssistantMessage("预览已就绪。请确认。");
+    },
+  ]);
+  const request = input("staged-cards", "生成预览");
+  const result = f.handle(request, { publish: (_input, event) => events.push(event) });
+  await reachedFinal;
+  assert.equal(f.runtime.store.listTasks("owner", "movie")[0]!.state, "awaiting_confirmation");
+  assert.ok(!events.some((event) => "view" in event || event.type === "reply"));
+  assert.ok(events.some((event) => event.type === "tool_end"));
+  release();
+  const reply = await result;
+  assert.equal(reply.views[0]!.kind, "confirmation");
+  assert.deepEqual(events.at(-1), { type: "reply", reply });
+  assert.deepEqual(
+    f.runtime.store.getMessages(request).map((message) => message.id),
+    [messageId(request.requestId, "user"), messageId(request.requestId, "assistant")],
+  );
+});
 
 test("a preview cancelled within a turn has one final cancelled result and no confirmation card", async (t) => {
   const f = await fixture(t);
@@ -63,6 +98,21 @@ test("a corrected proposal only exposes its current confirmation", async (t) => 
   assert.equal(
     reply.views[0]!.task.id,
     tasks.find((task) => task.state === "awaiting_confirmation")!.id,
+  );
+  assert.equal(f.backend.submitCalls, 0);
+});
+
+test("confirmation follows the result context regardless of tool execution order", async (t) => {
+  const f = await fixture(t);
+  f.faux.setResponses([
+    prepareLinks("a"),
+    fauxAssistantMessage(fauxToolCall("search_media", { query: "Hamnet" })),
+    fauxAssistantMessage("相关结果与操作预览。"),
+  ]);
+  const reply = await f.handle(input("confirmation-order", "查询并生成预览"));
+  assert.deepEqual(
+    reply.views.map((view) => view.kind),
+    ["media", "confirmation"],
   );
   assert.equal(f.backend.submitCalls, 0);
 });

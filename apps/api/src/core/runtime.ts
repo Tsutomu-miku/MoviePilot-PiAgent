@@ -212,7 +212,6 @@ export class AgentRuntime {
       approvedTaskIds: new Set(),
       publish: (view) => {
         views.push(view);
-        publish({ type: "view", view });
       },
     };
     this.approveText(input, context);

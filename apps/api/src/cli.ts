@@ -85,10 +85,13 @@ try {
           process.stdout.write(event.text);
         } else if (event.type === "tool_start") {
           process.stdout.write(`\n[${event.name}]\n`);
-        } else if (event.type === "view") {
-          process.stdout.write(`\n${JSON.stringify(event.view, null, 2)}\n`);
-        } else if (event.type === "reply" && !streamed) {
-          process.stdout.write(event.reply.text);
+        } else if (event.type === "reply") {
+          if (!streamed) {
+            process.stdout.write(event.reply.text);
+          }
+          for (const view of event.reply.views) {
+            process.stdout.write(`\n${JSON.stringify(view, null, 2)}\n`);
+          }
         }
       }
       process.stdout.write("\n");

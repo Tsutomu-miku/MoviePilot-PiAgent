@@ -225,7 +225,6 @@ export const uiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text_delta"), text: z.string() }),
   z.object({ type: z.literal("tool_start"), name: z.string() }),
   z.object({ type: z.literal("tool_end"), name: z.string(), failed: z.boolean() }),
-  z.object({ type: z.literal("view"), view: viewSchema }),
   z.object({ type: z.literal("reply"), reply: agentReplySchema }),
   z.object({ type: z.literal("error"), message: z.string() }),
 ]);
@@ -247,6 +246,9 @@ export const displayMessageSchema = z.object({
   createdAt: z.string(),
 });
 export type DisplayMessage = z.infer<typeof displayMessageSchema>;
+export function messageId(requestId: string, role: DisplayMessage["role"]): string {
+  return `${requestId}:${role}`;
+}
 export const stateLabels: Record<TaskState, string> = {
   awaiting_confirmation: "等待确认",
   submitting: "正在提交",

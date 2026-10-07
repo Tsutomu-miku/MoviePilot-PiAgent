@@ -19,8 +19,11 @@ import { fixture, input } from "./fixtures.js";
 
 class FakeChannel implements FeishuTransport {
   handlers: Partial<EventMap> = {};
-  sent: Array<{ chatId: string; input: SendInput }> = [];
+  sent: Array<{ chatId: string; input: SendInput; options?: SendOptions }> = [];
   streams: string[] = [];
+  streamIds: string[] = [];
+  deliveryEvents: string[] = [];
+  beforeSend?: (input: SendInput) => Promise<void>;
   streamUpdates: string[] = [];
   disconnected = false;
   failStream = false;
@@ -35,11 +38,14 @@ class FakeChannel implements FeishuTransport {
   async disconnect(): Promise<void> {
     this.disconnected = true;
   }
-  async send(chatId: string, message: SendInput, _options?: SendOptions) {
-    this.sent.push({ chatId, input: message });
+  async send(chatId: string, message: SendInput, options?: SendOptions) {
+    await this.beforeSend?.(message);
+    this.sent.push({ chatId, input: message, options });
+    this.deliveryEvents.push("send");
     return { messageId: randomUUID() };
   }
   async stream(_chatId: string, stream: StreamInput, _options?: SendOptions) {
+    this.deliveryEvents.push("stream:start");
     if (this.failStream) {
       throw new Error("outbound unavailable");
     }
@@ -47,8 +53,10 @@ class FakeChannel implements FeishuTransport {
       throw new Error("Expected markdown stream");
     }
     let text = "";
+    const messageId = randomUUID();
+    this.streamIds.push(messageId);
     await stream.markdown({
-      messageId: randomUUID(),
+      messageId,
       append: async (chunk) => {
         text += chunk;
         this.streamUpdates.push(text);
@@ -59,7 +67,8 @@ class FakeChannel implements FeishuTransport {
       },
     });
     this.streams.push(text);
-    return { messageId: randomUUID() };
+    this.deliveryEvents.push(`stream:end:${text}`);
+    return { messageId };
   }
 }
 
@@ -132,6 +141,129 @@ function userText(context: TranscriptContext): string[] {
             .join(""),
     );
 }
+
+test("each Feishu turn finishes its linked cards before another reply or command starts", async (t) => {
+  const f = await fixture(t);
+  const channel = new FakeChannel();
+  const ui = new FeishuUi(f.runtime, channel, {
+    ownerId: "owner",
+    allowedOpenIds: ["ou_owner"],
+    allowedGroupIds: [],
+    onError: (error) => f.errors.push(error),
+  });
+  await ui.start();
+  let release!: () => void;
+  let started!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cardStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  channel.beforeSend = async (input) => {
+    if ("card" in input && channel.sent.length === 0) {
+      started();
+      await waiting;
+    }
+  };
+  f.faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("search_media", { query: "Hamnet" })),
+    fauxAssistantMessage("第一轮结果"),
+    fauxAssistantMessage("第二轮结果"),
+  ]);
+  channel.handlers.message?.(message("one", "找哈姆奈特"));
+  channel.handlers.message?.(message("two", "补充条件"));
+  channel.handlers.message?.(message("command", "/sessions"));
+  await cardStarted;
+  assert.deepEqual(channel.deliveryEvents, ["stream:start", "stream:end:第一轮结果"]);
+  assert.equal(f.faux.state.callCount, 2);
+  release();
+  await ui.idle();
+  assert.deepEqual(channel.deliveryEvents, [
+    "stream:start",
+    "stream:end:第一轮结果",
+    "send",
+    "stream:start",
+    "stream:end:第二轮结果",
+    "send",
+  ]);
+  assert.equal(channel.sent[0]!.options?.replyTo, channel.streamIds[0]);
+  assert.equal(f.errors.length, 0);
+  await ui.close();
+});
+
+test("a failed card delivery releases the chat queue for the next turn", async (t) => {
+  const f = await fixture(t);
+  const channel = new FakeChannel();
+  channel.beforeSend = async () => {
+    throw new Error("card delivery failed");
+  };
+  const ui = new FeishuUi(f.runtime, channel, {
+    ownerId: "owner",
+    allowedOpenIds: ["ou_owner"],
+    allowedGroupIds: [],
+    onError: (error) => f.errors.push(error),
+  });
+  await ui.start();
+  f.faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("search_media", { query: "Hamnet" })),
+    fauxAssistantMessage("第一轮结果"),
+    fauxAssistantMessage("第二轮结果"),
+  ]);
+  channel.handlers.message?.(message("one", "找哈姆奈特"));
+  channel.handlers.message?.(message("two", "继续"));
+  await ui.idle();
+  assert.deepEqual(channel.streams, ["第一轮结果", "第二轮结果"]);
+  assert.equal(f.errors.length, 1);
+  assert.match(String(f.errors[0]), /card delivery failed/);
+  await ui.close();
+});
+
+test("a slow Feishu chat does not block another chat", async (t) => {
+  const f = await fixture(t);
+  const channel = new FakeChannel();
+  const ui = new FeishuUi(f.runtime, channel, {
+    ownerId: "owner",
+    allowedOpenIds: ["ou_owner"],
+    allowedGroupIds: [],
+    onError: (error) => f.errors.push(error),
+  });
+  await ui.start();
+  let release!: () => void;
+  let started!: () => void;
+  let otherFinished!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cardStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const otherChat = new Promise<void>((resolve) => {
+    otherFinished = resolve;
+  });
+  channel.beforeSend = async () => {
+    started();
+    await waiting;
+  };
+  f.faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("search_media", { query: "Hamnet" })),
+    fauxAssistantMessage("第一轮结果"),
+    () => {
+      otherFinished();
+      return fauxAssistantMessage("另一个聊天的结果");
+    },
+  ]);
+  channel.handlers.message?.(message("one", "找哈姆奈特"));
+  await cardStarted;
+  channel.handlers.message?.({ ...message("other", "你好"), chatId: "chat-two" });
+  await otherChat;
+  assert.equal(f.runtime.store.listConversations("owner").length, 2);
+  release();
+  await ui.idle();
+  assert.ok(channel.streams.includes("另一个聊天的结果"));
+  assert.equal(f.errors.length, 0);
+  await ui.close();
+});
 
 test("Feishu continuous messages use one persistent conversation despite changing reply roots", async (t) => {
   const f = await fixture(t);

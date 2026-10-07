@@ -1,6 +1,16 @@
 import type { View, UserAction } from "@mp-pi/contracts";
 import { stateLabels } from "@mp-pi/contracts";
 
+const titles: Record<View["kind"], string> = {
+  transfer_failures: "整理失败记录",
+  media: "媒体搜索结果",
+  resources: "资源搜索结果",
+  confirmation: "确认操作",
+  tasks: "任务状态",
+  subscriptions: "订阅",
+  library: "媒体库",
+};
+
 function button(label: string, conversationId: string, action: UserAction): object {
   return {
     tag: "button",
@@ -177,7 +187,7 @@ export function viewCard(view: View, conversationId: string): object {
   }
   return {
     config: { wide_screen_mode: true },
-    header: { title: { tag: "plain_text", content: "Pi Agent" }, template: "blue" },
+    header: { title: { tag: "plain_text", content: titles[view.kind] }, template: "blue" },
     elements,
   };
 }

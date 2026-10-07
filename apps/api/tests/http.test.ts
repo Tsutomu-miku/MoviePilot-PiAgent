@@ -194,7 +194,7 @@ test("automatically named conversations take their first message while explicit 
     "电影清单",
   );
   f.runtime.store.addMessage(
-    { userId: "owner", conversationId: explicit.id },
+    { userId: "owner", conversationId: explicit.id, requestId: "explicit-title" },
     "user",
     "别改我的名称",
   );

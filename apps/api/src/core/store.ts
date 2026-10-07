@@ -4,7 +4,6 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { lockSync } from "proper-lockfile";
 import { mkdirSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type {
   AgentInput,
@@ -14,6 +13,7 @@ import type {
   Preferences,
   View,
 } from "@mp-pi/contracts";
+import { messageId } from "@mp-pi/contracts";
 import type { Identity, Media, SearchSnapshot, Task, TransferSnapshot } from "../domain/types.js";
 import * as schema from "../db/schema.js";
 import { ConflictError, NotFoundError } from "./errors.js";
@@ -164,7 +164,7 @@ export class StateStore {
     this.db.update(schema.requests).set({ status: "interrupted" }).where(requestKey(input)).run();
   }
   addMessage(
-    identity: Identity,
+    identity: Identity & Pick<AgentInput, "requestId">,
     role: DisplayMessage["role"],
     text: string,
     views: View[] = [],
@@ -179,7 +179,15 @@ export class StateStore {
     }
     this.db
       .insert(schema.messages)
-      .values({ ...identity, id: randomUUID(), role, text, views, createdAt: now })
+      .values({
+        userId: identity.userId,
+        conversationId: identity.conversationId,
+        id: messageId(identity.requestId, role),
+        role,
+        text,
+        views,
+        createdAt: now,
+      })
       .run();
     this.db
       .update(schema.conversations)

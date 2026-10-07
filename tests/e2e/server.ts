@@ -23,7 +23,13 @@ const models = await ModelRuntime.create({
   refreshOnCreate: false,
 });
 models.registerNativeProvider(faux.provider);
-function respond(context: TranscriptContext) {
+let releaseReply!: () => void;
+const replyGate = new Promise<void>((resolve) => {
+  releaseReply = resolve;
+});
+let previewReady = false;
+
+async function respond(context: TranscriptContext) {
   const last = context.messages.at(-1);
   const user = [...context.messages].reverse().find((item) => item.role === "user");
   const text =
@@ -35,6 +41,17 @@ function respond(context: TranscriptContext) {
             .map((block) => block.text)
             .join("")
       : "";
+  if (text === "卡片时机测试") {
+    if (last?.role === "toolResult") {
+      previewReady = true;
+      await replyGate;
+      return fauxAssistantMessage("最终预览已生成。");
+    }
+    return fauxAssistantMessage([
+      fauxText("我先准备预览。"),
+      fauxToolCall("prepare_links", { links: `magnet:?xt=urn:btih:${"b".repeat(40)}` }),
+    ]);
+  }
   if (text === "预览后取消") {
     if (last?.role === "toolResult" && last.toolName === "prepare_links") {
       const content = last.content.find((block) => block.type === "text");
@@ -80,6 +97,11 @@ const app = await createApp({
   tracker: { refresh: async () => undefined },
   webDir: resolve("apps/web/dist"),
   rateLimitMax: 1000,
+});
+app.get("/test/reply-gate", async () => ({ previewReady }));
+app.post("/test/reply-gate/release", async () => {
+  releaseReply();
+  return { released: true };
 });
 const hostedPrefix = "/api/v1/plugin/PiAgentBridge/ui/";
 const host = Fastify();

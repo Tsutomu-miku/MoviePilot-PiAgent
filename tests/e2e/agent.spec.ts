@@ -133,6 +133,72 @@ test("a preview cancelled in the same reply leaves one cancelled result without 
   await expect(page.locator(".chat-history")).not.toContainText("先生成一份预览。");
 });
 
+test("cards appear once after the final reply and queued turns keep their position during slow history refresh", async ({
+  page,
+}) => {
+  await login(page);
+  let releaseTasks!: () => void;
+  let refreshStarted!: () => void;
+  const heldTasks = new Promise<void>((resolve) => {
+    releaseTasks = resolve;
+  });
+  const tasksRefresh = new Promise<void>((resolve) => {
+    refreshStarted = resolve;
+  });
+  await page.evaluate(() => {
+    const state = window as typeof window & { cardCounts: number[] };
+    state.cardCounts = [];
+    const observer = new MutationObserver(() => {
+      state.cardCounts.push(document.querySelectorAll(".chat-history .task").length);
+    });
+    observer.observe(document.querySelector(".chat-history")!, { childList: true, subtree: true });
+  });
+  await page.getByLabel("消息").fill("卡片时机测试");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect
+    .poll(async () => (await (await page.request.get("/test/reply-gate")).json()).previewReady)
+    .toBe(true);
+  await expect(page.locator(".chat-history .task")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "确认执行", exact: true })).toHaveCount(0);
+  await page.getByLabel("消息").fill("补充条件");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(page.locator(".chat-history .message")).toHaveClass([
+    "message message-user",
+    "message message-assistant",
+    "message message-user",
+    "message message-assistant",
+  ]);
+  await page.route("**/api/tasks", async (route) => {
+    const response = await route.fetch();
+    refreshStarted();
+    await heldTasks;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.request.post("/test/reply-gate/release");
+    await tasksRefresh;
+    await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
+    await expect(page.getByText("最终预览已生成。", { exact: true })).toHaveCount(1);
+    await expect(page.locator(".chat-history .task")).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "确认执行", exact: true })).toBeEnabled();
+    await expect(page.locator(".chat-history .message-user .message-text")).toHaveText([
+      "卡片时机测试",
+      "补充条件",
+    ]);
+    expect(
+      await page.evaluate(() =>
+        Math.max(...(window as typeof window & { cardCounts: number[] }).cardCounts),
+      ),
+    ).toBe(1);
+  } finally {
+    releaseTasks();
+  }
+  await expect(page.getByText("同一会话中已收到补充条件。", { exact: true })).toHaveCount(1);
+  await page.reload();
+  await expect(page.getByText("最终预览已生成。", { exact: true })).toHaveCount(1);
+  await expect(page.locator(".chat-history .task")).toHaveCount(1);
+});
+
 test("mobile layout preserves conversation and exposes usable controls", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page);

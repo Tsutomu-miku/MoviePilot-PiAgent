@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, type FormEvent } from "react";
+import { Fragment, useState, useEffect, useRef, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { UserAction } from "@mp-pi/contracts";
+import { messageId } from "@mp-pi/contracts";
 import { ApiClient } from "../api";
 import type { PendingReply } from "../hooks/useChat";
 import { MessageViews } from "./MessageViews";
@@ -24,17 +25,17 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
   const tasks = useQuery({ queryKey: ["tasks"], queryFn: () => api.tasks() });
   const bottom = useRef<HTMLDivElement>(null);
   const active = pending.filter((item) => item.conversationId === conversationId);
+  const activeIds = new Set(
+    active.flatMap((item) => [item.user.id, messageId(item.id, "assistant")]),
+  );
+  const history = (messages.data ?? []).filter((item) => !activeIds.has(item.id));
   const busy = active.length > 0;
-  const currentSearchId = [
-    ...(messages.data ?? []).flatMap((message) => message.views),
-    ...active.flatMap((item) => item.views),
-  ]
+  const currentSearchId = history
+    .flatMap((message) => message.views)
     .filter((view) => view.kind === "resources")
     .at(-1)?.searchId;
-  const currentTransferSearchId = [
-    ...(messages.data ?? []).flatMap((message) => message.views),
-    ...active.flatMap((item) => item.views),
-  ]
+  const currentTransferSearchId = history
+    .flatMap((message) => message.views)
     .filter((view) => view.kind === "transfer_failures")
     .at(-1)?.searchId;
   useEffect(() => {
@@ -65,7 +66,7 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
             {messages.error.message}
           </p>
         )}
-        {messages.data?.length === 0 && (
+        {history.length === 0 && !busy && (
           <div className="empty-state">
             <h2>从想看的内容开始</h2>
             <p>可以连续补充名称、清晰度、声道和字幕。下载前会让你确认。</p>
@@ -81,7 +82,7 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
             </div>
           </div>
         )}
-        {messages.data?.map((message) => (
+        {history.map((message) => (
           <article className={`message message-${message.role}`} key={message.id}>
             <div className="message-label">{message.role === "user" ? "你" : "Pi Agent"}</div>
             <p className="message-text">{message.text}</p>
@@ -98,20 +99,16 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
           </article>
         ))}
         {active.map((item) => (
-          <article className="message message-assistant" key={item.id}>
-            <div className="message-label">Pi Agent · {item.status}</div>
-            <p className="message-text">{item.text}</p>
-            <MessageViews
-              views={item.views}
-              api={api}
-              conversationId={conversationId}
-              busy={true}
-              onAction={onAction}
-              tasks={tasks.data ?? []}
-              currentSearchId={currentSearchId}
-              currentTransferSearchId={currentTransferSearchId}
-            />
-          </article>
+          <Fragment key={item.id}>
+            <article className="message message-user">
+              <div className="message-label">你</div>
+              <p className="message-text">{item.user.text}</p>
+            </article>
+            <article className="message message-assistant">
+              <div className="message-label">Pi Agent · {item.status}</div>
+              <p className="message-text">{item.text}</p>
+            </article>
+          </Fragment>
         ))}
         <div ref={bottom} />
       </div>

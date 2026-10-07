@@ -34,5 +34,10 @@ export function finalizeReplyViews(views: View[], tasks: TaskSummary[]): View[] 
       result.push(view);
     }
   }
-  return result.reverse();
+  const ordered = result.reverse();
+  // Show result context before the confirmation that acts on it.
+  return [
+    ...ordered.filter((view) => view.kind !== "confirmation"),
+    ...ordered.filter((view) => view.kind === "confirmation"),
+  ];
 }

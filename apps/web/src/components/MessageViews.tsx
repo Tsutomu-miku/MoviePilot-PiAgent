@@ -27,6 +27,10 @@ export function MessageViews({
   currentTransferSearchId,
 }: Props) {
   const [season, setSeason] = useState("1");
+  function currentTask(task: TaskSummary): TaskSummary {
+    const current = tasks.find((item) => item.id === task.id);
+    return current && current.updatedAt >= task.updatedAt ? current : task;
+  }
   return (
     <div className="message-views">
       {views.map((view, index) => {
@@ -118,7 +122,7 @@ export function MessageViews({
             return (
               <TaskList
                 key={index}
-                items={[tasks.find((task) => task.id === view.task.id) ?? view.task]}
+                items={[currentTask(view.task)]}
                 busy={busy}
                 onAction={onAction}
               />
@@ -127,7 +131,7 @@ export function MessageViews({
             return (
               <TaskList
                 key={index}
-                items={view.items.map((item) => tasks.find((task) => task.id === item.id) ?? item)}
+                items={view.items.map(currentTask)}
                 busy={busy}
                 onAction={onAction}
               />

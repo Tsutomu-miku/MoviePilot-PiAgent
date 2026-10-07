@@ -9,6 +9,7 @@ import type {
 import { actionSchema, stateLabels, type AgentInput } from "@mp-pi/contracts";
 import { AgentRuntime } from "../core/runtime.js";
 import { ConflictError } from "../core/errors.js";
+import { ConversationQueue } from "../core/queue.js";
 import type { Task } from "../domain/types.js";
 import { EventBuffer } from "./event-buffer.js";
 import { viewCard } from "./feishu-cards.js";
@@ -32,6 +33,7 @@ export class FeishuUi {
   private unsubscribe?: () => void;
   private stopped = false;
   private readonly pending = new Set<Promise<void>>();
+  private readonly deliveries = new ConversationQueue();
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -41,18 +43,19 @@ export class FeishuUi {
 
   async start(): Promise<void> {
     this.unsubscribe = this.channel.on({
-      message: (message) => this.dispatch(() => this.message(message)),
-      cardAction: (event) => this.dispatch(() => this.cardAction(event)),
+      message: (message) => this.dispatch(message.chatId, () => this.message(message)),
+      cardAction: (event) => this.dispatch(event.chatId, () => this.cardAction(event)),
       error: this.options.onError,
     });
     await this.channel.connect();
   }
 
-  private dispatch(operation: () => Promise<void>): void {
+  private dispatch(chatId: string, operation: () => Promise<void>): void {
     if (this.stopped) {
       return;
     }
-    const pending = operation()
+    const pending = this.deliveries
+      .run(chatId, operation)
       .catch(this.options.onError)
       .finally(() => {
         this.pending.delete(pending);
@@ -195,7 +198,6 @@ export class FeishuUi {
 
   private async execute(input: AgentInput, chatId: string): Promise<void> {
     const buffer = new EventBuffer();
-    // Enqueue at receipt time so slow outbound requests cannot reorder user messages.
     const result = this.runtime.handle(input, { publish: (_input, event) => buffer.push(event) });
     const completed = result.then(
       (reply) => {
@@ -208,7 +210,7 @@ export class FeishuUi {
       },
     );
     try {
-      await this.channel.stream(chatId, {
+      const sent = await this.channel.stream(chatId, {
         markdown: async (controller) => {
           let streamed = false;
           for await (const event of buffer.read()) {
@@ -237,7 +239,11 @@ export class FeishuUi {
         throw outcome.error;
       }
       for (const view of outcome.reply.views) {
-        await this.channel.send(chatId, { card: viewCard(view, input.conversationId) });
+        await this.channel.send(
+          chatId,
+          { card: viewCard(view, input.conversationId) },
+          { replyTo: sent.messageId },
+        );
       }
     } finally {
       buffer.close();
@@ -253,20 +259,24 @@ export class FeishuUi {
     if (!route || task.notifiedState === task.state) {
       return;
     }
-    await this.channel.send(route.chatId, {
-      text: `${task.title}\n${stateLabels[task.state]} · ${task.message}`,
-    });
+    await this.deliveries.run(route.chatId, () =>
+      this.channel.send(route.chatId, {
+        text: `${task.title}\n${stateLabels[task.state]} · ${task.message}`,
+      }),
+    );
   }
 
   async close(): Promise<void> {
     this.stopReceiving();
-    await this.channel.disconnect();
+    await this.deliveries.close();
     await this.idle();
+    await this.channel.disconnect();
   }
 
   stopReceiving(): void {
     this.stopped = true;
     this.unsubscribe?.();
+    void this.deliveries.close();
   }
 
   async idle(): Promise<void> {
