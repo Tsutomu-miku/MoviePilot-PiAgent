@@ -28,6 +28,9 @@ import type { MediaBackend } from "../integrations/moviepilot.js";
 import { SearchService } from "../services/search-service.js";
 import { TaskService } from "../services/task-service.js";
 import { TransferService } from "../services/transfer-service.js";
+import { SkillService } from "../services/skill-service.js";
+import { MikanSearchService } from "../services/mikan-search-service.js";
+import type { Identity } from "../domain/types.js";
 
 export interface RuntimeOptions {
   projectDir: string;
@@ -43,6 +46,8 @@ export class AgentRuntime {
   readonly search: SearchService;
   readonly tasks: TaskService;
   readonly transfers: TransferService;
+  readonly skills: SkillService;
+  readonly mikan: MikanSearchService;
   private readonly queue = new ConversationQueue();
   private readonly sessions: SessionPool;
   private readonly abort = new AbortController();
@@ -51,28 +56,30 @@ export class AgentRuntime {
   private constructor(
     private readonly options: RuntimeOptions,
     store: StateStore,
-    private readonly loader: DefaultResourceLoader,
-    settings: SettingsManager,
+    private readonly settings: SettingsManager,
   ) {
     this.store = store;
+    this.skills = new SkillService(join(options.projectDir, "skills"), options.dataDir);
     this.search = new SearchService(store, options.backend);
+    this.mikan = new MikanSearchService(store, options.backend);
     this.transfers = new TransferService(store, options.backend, this.search);
-    this.tasks = new TaskService(store, options.backend, this.search, this.transfers);
+    this.tasks = new TaskService(store, options.backend, this.search, this.transfers, this.mikan);
     const tools = createTools({
       store,
       search: this.search,
       tasks: this.tasks,
       transfers: this.transfers,
       backend: options.backend,
-      loader,
-      skillsDir: join(options.projectDir, "skills"),
+      skills: this.skills,
+      mikan: this.mikan,
     });
     this.sessions = new SessionPool({
       ...options,
       store,
-      loader,
       settings,
       tools,
+      getLoader: (identity) => this.resourceLoader(identity),
+      getSkillRevision: (userId) => this.skills.revision(userId),
       isBusy: (key) => this.queue.isBusy(key),
     });
   }
@@ -88,34 +95,34 @@ export class AgentRuntime {
       compaction: { enabled: true },
       retry: { enabled: false },
     });
+    return new AgentRuntime(paths, store, settings);
+  }
+
+  private async resourceLoader(identity: Identity): Promise<DefaultResourceLoader> {
     const loader: DefaultResourceLoader = new DefaultResourceLoader({
-      cwd: paths.projectDir,
-      agentDir: join(paths.dataDir, "pi"),
-      settingsManager: settings,
+      cwd: this.options.projectDir,
+      agentDir: join(this.options.dataDir, "pi"),
+      settingsManager: this.settings,
       noExtensions: true,
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      additionalSkillPaths: [join(paths.projectDir, "skills")],
+      skillsOverride: () => this.skills.load(identity.userId),
       systemPrompt,
       systemPromptOverride: (base) =>
         `${base ?? ""}\n<available_skills>\n${loader
           .getSkills()
-          .skills.map((skill) => `${skill.name}: ${skill.description}`)
+          .skills.filter((skill) => !skill.disableModelInvocation)
+          .map((skill) => `${skill.name}: ${skill.description}`)
           .join("\n")}\n</available_skills>`,
     });
-    try {
-      await loader.reload();
-      return new AgentRuntime(paths, store, loader, settings);
-    } catch (error) {
-      store.close();
-      throw error;
-    }
+    await loader.reload();
+    return loader;
   }
 
-  getSkillNames(): string[] {
-    return this.loader.getSkills().skills.map((skill) => skill.name);
+  getSkillNames(userId: string): string[] {
+    return this.skills.load(userId).skills.map((skill) => skill.name);
   }
 
   handle(input: AgentInput, adapter?: UiAdapter): Promise<AgentReply> {
@@ -126,6 +133,7 @@ export class AgentRuntime {
       requestId: input.requestId,
       text: input.text,
       action: input.action,
+      skillName: input.skillName,
     });
     this.store.getConversation(input);
     return this.queue.run(conversationKey(input), () => this.process(input, adapter));
@@ -134,6 +142,15 @@ export class AgentRuntime {
   private async action(action: UserAction, context: ToolContext): Promise<View> {
     const signal = this.abort.signal;
     switch (action.type) {
+      case "mikan_search":
+        return this.mikan.search(action.query, context, signal);
+      case "prepare_mikan_download":
+        return this.tasks.prepareMikanDownload(
+          action.searchId,
+          action.resourceIds,
+          context,
+          signal,
+        );
       case "transfer_failures":
         return this.transfers.query(
           { title: action.title, page: action.page, count: 20 },
@@ -249,7 +266,11 @@ export class AgentRuntime {
         );
       } else {
         const session = execution.session;
-        await toolContext.run(context, () => session.prompt(input.text));
+        if (input.skillName) {
+          this.skills.read(input.userId, input.skillName);
+        }
+        const prompt = input.skillName ? `/skill:${input.skillName} ${input.text}` : input.text;
+        await toolContext.run(context, () => session.prompt(prompt));
         const last = [...session.messages]
           .reverse()
           .find((message) => message.role === "assistant");

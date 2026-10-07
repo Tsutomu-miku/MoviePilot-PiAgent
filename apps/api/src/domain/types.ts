@@ -1,4 +1,11 @@
-import type { Criteria, MediaSummary, ResourceSummary, TaskSummary } from "@mp-pi/contracts";
+import type {
+  Criteria,
+  MediaSummary,
+  ResourceSummary,
+  TaskSummary,
+  MikanQuery,
+  MikanResourceSummary,
+} from "@mp-pi/contracts";
 import type { MpMedia, MpTorrent } from "../integrations/moviepilot-contracts.js";
 import type { TransferCommand, TransferPage, TransferPlan } from "../integrations/transfers.js";
 
@@ -24,6 +31,16 @@ export interface SearchSnapshot {
 export interface TransferSnapshot extends TransferPage {
   id: string;
 }
+export interface MikanResource extends MikanResourceSummary {
+  downloadUrl: string;
+}
+export interface MikanSnapshot {
+  id: string;
+  query: MikanQuery;
+  searchUrl: string;
+  received: number;
+  resources: MikanResource[];
+}
 export interface TransferRetryItem extends TransferCommand {
   filename: string;
   sourceKey: string;
@@ -42,7 +59,12 @@ export type TaskPayload =
       resolvedLinks: string[];
       infoHashes: string[];
     }
-  | { kind: "links"; links: string[]; infoHashes: string[] }
+  | {
+      kind: "links";
+      links: string[];
+      infoHashes: string[];
+      mikan?: { searchId: string; resources: MikanResourceSummary[] };
+    }
   | { kind: "subscription"; media: Media; season?: number }
   | {
       kind: "subscription_change";
@@ -91,6 +113,7 @@ export function publicTask(task: Task): TaskSummary {
     message: task.message,
     playUrl: task.playUrl,
     confirmationToken: task.state === "awaiting_confirmation" ? task.confirmationToken : undefined,
+    downloadItems: task.payload.kind === "links" ? task.payload.mikan?.resources : undefined,
     transferItems:
       task.payload.kind === "transfer_retry"
         ? task.payload.items.map((item) => ({

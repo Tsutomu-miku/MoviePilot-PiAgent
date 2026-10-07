@@ -21,9 +21,10 @@ export interface SessionOptions {
   model: Model<Api>;
   modelRuntime: ModelRuntime;
   store: StateStore;
-  loader: DefaultResourceLoader;
   settings: SettingsManager;
   tools: ToolDefinition[];
+  getLoader(identity: Identity): Promise<DefaultResourceLoader>;
+  getSkillRevision(userId: string): number;
   isBusy(key: string): boolean;
 }
 
@@ -33,6 +34,7 @@ export function conversationKey(identity: Identity): string {
 
 export class SessionPool {
   private readonly sessions = new Map<string, AgentSession>();
+  private readonly skillRevisions = new Map<string, number>();
 
   constructor(private readonly options: SessionOptions) {}
 
@@ -44,6 +46,11 @@ export class SessionPool {
     const key = conversationKey(identity);
     const existing = this.sessions.get(key);
     if (existing) {
+      const revision = this.options.getSkillRevision(identity.userId);
+      if (this.skillRevisions.get(key) !== revision) {
+        await existing.reload();
+        this.skillRevisions.set(key, revision);
+      }
       this.sessions.delete(key);
       this.sessions.set(key, existing);
       return existing;
@@ -67,7 +74,7 @@ export class SessionPool {
       thinkingLevel: "off",
       sessionManager: manager,
       settingsManager: this.options.settings,
-      resourceLoader: this.options.loader,
+      resourceLoader: await this.options.getLoader(identity),
       tools: this.options.tools.map((tool) => tool.name),
       customTools: this.options.tools,
     });
@@ -83,6 +90,7 @@ export class SessionPool {
       }
     }
     this.sessions.set(key, session);
+    this.skillRevisions.set(key, this.options.getSkillRevision(identity.userId));
     this.evictIdle();
     return session;
   }
@@ -115,6 +123,7 @@ export class SessionPool {
       if (!this.options.isBusy(key)) {
         session.dispose();
         this.sessions.delete(key);
+        this.skillRevisions.delete(key);
       }
     }
   }
@@ -128,5 +137,6 @@ export class SessionPool {
       session.dispose();
     }
     this.sessions.clear();
+    this.skillRevisions.clear();
   }
 }

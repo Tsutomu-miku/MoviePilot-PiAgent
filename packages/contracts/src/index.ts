@@ -23,6 +23,29 @@ export const preferencesSchema = criteriaSchema
   .extend({ destination: destinationSchema.optional() });
 export type Preferences = z.infer<typeof preferencesSchema>;
 
+export const skillNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
+export const skillSummarySchema = z.object({
+  name: skillNameSchema,
+  description: z.string(),
+  source: z.enum(["builtin", "personal"]),
+  enabled: z.boolean(),
+});
+export type SkillSummary = z.infer<typeof skillSummarySchema>;
+export const skillDetailSchema = skillSummarySchema.extend({ content: z.string() });
+export type SkillDetail = z.infer<typeof skillDetailSchema>;
+export const skillWriteSchema = z.strictObject({
+  content: z.string().min(1).max(32000),
+  enabled: z.boolean(),
+});
+export type SkillWrite = z.infer<typeof skillWriteSchema>;
+export const mikanQuerySchema = z.strictObject({
+  keyword: z.string().trim().min(1).max(120),
+  group: z.string().trim().min(1).max(120).optional(),
+  resolution: criteriaSchema.shape.resolution,
+  subtitle: criteriaSchema.shape.subtitle,
+});
+export type MikanQuery = z.infer<typeof mikanQuerySchema>;
+
 export const mediaSummarySchema = z.object({
   key: z.string(),
   title: z.string(),
@@ -53,6 +76,16 @@ export const resourceSummarySchema = z.object({
   tags: tagsSchema,
 });
 export type ResourceSummary = z.infer<typeof resourceSummarySchema>;
+export const mikanResourceSchema = z.object({
+  id: z.string().regex(/^[a-f0-9]{64}$/),
+  title: z.string(),
+  sourceUrl: z.url({ protocol: /^https?$/ }),
+  sizeGiB: z.number().nonnegative(),
+  publishedAt: z.string(),
+  group: z.string().optional(),
+  tags: tagsSchema,
+});
+export type MikanResourceSummary = z.infer<typeof mikanResourceSchema>;
 export const taskStateSchema = z.enum([
   "awaiting_confirmation",
   "submitting",
@@ -112,9 +145,20 @@ export const taskSummarySchema = z.object({
   confirmationToken: z.string().optional(),
   playUrl: z.string().optional(),
   transferItems: z.array(transferTaskItemSchema).optional(),
+  downloadItems: z.array(mikanResourceSchema).optional(),
 });
 export type TaskSummary = z.infer<typeof taskSummarySchema>;
 export const viewSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("mikan"),
+    searchId: z.string().uuid(),
+    query: mikanQuerySchema,
+    searchUrl: z.url({ protocol: /^https?$/ }),
+    received: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+    offset: z.number().int().nonnegative(),
+    items: z.array(mikanResourceSchema),
+  }),
   z.object({
     kind: z.literal("transfer_failures"),
     title: z.string().optional(),
@@ -156,6 +200,15 @@ export const viewSchema = z.discriminatedUnion("kind", [
 ]);
 export type View = z.infer<typeof viewSchema>;
 export const actionSchema = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("mikan_search"), query: mikanQuerySchema }),
+  z.strictObject({
+    type: z.literal("prepare_mikan_download"),
+    searchId: z.string().uuid(),
+    resourceIds: z
+      .array(z.string().regex(/^[a-f0-9]{64}$/))
+      .min(1)
+      .max(20),
+  }),
   z.strictObject({
     type: z.literal("transfer_failures"),
     title: z.string().max(200).optional(),
@@ -206,6 +259,7 @@ export const messageInputSchema = z
     requestId: z.string().min(1).max(200),
     text: z.string().max(32000),
     action: actionSchema.optional(),
+    skillName: skillNameSchema.optional(),
   })
   .refine((value) => value.text.trim().length > 0 || value.action !== undefined, "消息不能为空");
 export type MessageInput = z.infer<typeof messageInputSchema>;

@@ -19,8 +19,9 @@ function userText(context: TranscriptContext): string[] {
 }
 test("real Pi SDK discovers Skill and executes scoped custom business tools", async (t) => {
   const f = await fixture(t);
-  assert.deepEqual(f.runtime.getSkillNames(), [
+  assert.deepEqual(f.runtime.getSkillNames("owner"), [
     "media-request",
+    "mikan-search",
     "moviepilot-maintenance",
     "preferences",
     "task-status",

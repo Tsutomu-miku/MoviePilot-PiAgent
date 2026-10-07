@@ -68,6 +68,38 @@ test("HTTP derives identity from its authenticated owner and validates strict bo
   });
 });
 
+test("Mikan pagination belongs to the authenticated conversation and never fetches the source again", async (t) => {
+  const f = await fixture(t);
+  const app = await createApp({
+    runtime: f.runtime,
+    ownerId: "owner",
+    authToken: token,
+    tracker: { refresh: async () => undefined },
+  });
+  t.after(() => app.close());
+  const id = randomUUID();
+  const identity = { userId: "owner", conversationId: id };
+  f.runtime.store.ensureConversation(identity, "动画");
+  const reply = await f.runtime.handle({
+    ...identity,
+    requestId: "mikan-query",
+    text: "搜索动画",
+    action: { type: "mikan_search", query: { keyword: "花织" } },
+  });
+  const view = reply.views[0];
+  assert.ok(view?.kind === "mikan");
+  const url = `/api/conversations/${id}/mikan-resources?searchId=${view.searchId}&offset=0`;
+  assert.equal((await app.inject({ url })).statusCode, 401);
+  assert.deepEqual((await app.inject({ url, headers })).json(), JSON.parse(JSON.stringify(view)));
+  assert.equal(f.backend.mikanQueries.length, 1);
+  assert.equal(
+    (await app.inject({ url: url.replace(view.searchId, randomUUID()), headers })).statusCode,
+    409,
+  );
+  assert.equal((await app.inject({ url: `${url}&userId=intruder`, headers })).statusCode, 400);
+  assert.equal((await app.inject({ url: url.replace(id, randomUUID()), headers })).statusCode, 404);
+});
+
 test("HTTP streams Pi events, persists history and replays a duplicate reply without a second model call", async (t) => {
   const f = await fixture(t);
   const app = await createApp({

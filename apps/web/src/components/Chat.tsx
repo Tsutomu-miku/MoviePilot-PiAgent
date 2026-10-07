@@ -6,21 +6,25 @@ import { ApiClient } from "../api";
 import type { PendingReply } from "../hooks/useChat";
 import { MessageViews } from "./MessageViews";
 import { Dialog } from "./Dialog";
+import { MikanSearchForm } from "./MikanSearchForm";
 
 interface Props {
   conversationId: string;
   api: ApiClient;
   pending: PendingReply[];
+  selectedSkill?: string;
+  onClearSkill(): void;
   onSend(text: string, action?: UserAction): void;
 }
 
-export function Chat({ conversationId, api, pending, onSend }: Props) {
+export function Chat({ conversationId, api, pending, selectedSkill, onClearSkill, onSend }: Props) {
   const messages = useQuery({
     queryKey: ["messages", conversationId],
     queryFn: () => api.messages(conversationId),
   });
   const [draft, setDraft] = useState("");
   const [linksOpen, setLinksOpen] = useState(false);
+  const [mikanOpen, setMikanOpen] = useState(false);
   const [links, setLinks] = useState("");
   const tasks = useQuery({ queryKey: ["tasks"], queryFn: () => api.tasks() });
   const bottom = useRef<HTMLDivElement>(null);
@@ -30,6 +34,10 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
   );
   const history = (messages.data ?? []).filter((item) => !activeIds.has(item.id));
   const busy = active.length > 0;
+  const currentMikanSearchId = history
+    .flatMap((message) => message.views)
+    .filter((view) => view.kind === "mikan")
+    .at(-1)?.searchId;
   const currentSearchId = history
     .flatMap((message) => message.views)
     .filter((view) => view.kind === "resources")
@@ -78,6 +86,7 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
               </button>
               <button onClick={() => onSend("搜索电影哈姆奈特")}>搜索电影</button>
               <button onClick={() => setLinksOpen(true)}>粘贴链接到 115</button>
+              <button onClick={() => setMikanOpen(true)}>蜜柑搜索</button>
               <button onClick={() => onSend("查看 MoviePilot 原生订阅")}>查看订阅</button>
             </div>
           </div>
@@ -95,6 +104,7 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
               tasks={tasks.data ?? []}
               currentSearchId={currentSearchId}
               currentTransferSearchId={currentTransferSearchId}
+              currentMikanSearchId={currentMikanSearchId}
             />
           </article>
         ))}
@@ -113,6 +123,14 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
         <div ref={bottom} />
       </div>
       <form className="composer" onSubmit={submit}>
+        {selectedSkill && (
+          <div className="selected-skill">
+            <span>技能：{selectedSkill}</span>
+            <button type="button" onClick={onClearSkill}>
+              取消选择
+            </button>
+          </div>
+        )}
         <textarea
           aria-label="消息"
           placeholder="想看什么？也可以继续补充条件…"
@@ -129,6 +147,9 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
         <div className="composer-actions">
           <button type="button" onClick={() => setLinksOpen(true)}>
             粘贴链接到 115
+          </button>
+          <button type="button" onClick={() => setMikanOpen(true)}>
+            蜜柑搜索
           </button>
           <button
             type="button"
@@ -163,6 +184,18 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
               </button>
             </div>
           </form>
+        </Dialog>
+      )}
+      {mikanOpen && (
+        <Dialog title="搜索蜜柑计划" onClose={() => setMikanOpen(false)}>
+          <p>直接搜索站点的发布资源，支持中文关键词和字幕组。</p>
+          <MikanSearchForm
+            disabled={busy}
+            onSubmit={(query) => {
+              onAction({ type: "mikan_search", query }, `搜索蜜柑：${query.keyword}`);
+              setMikanOpen(false);
+            }}
+          />
         </Dialog>
       )}
     </section>

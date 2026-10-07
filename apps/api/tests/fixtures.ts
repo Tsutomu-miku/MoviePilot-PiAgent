@@ -27,6 +27,19 @@ import type {
   TransferPlan,
 } from "../src/integrations/transfers.js";
 import { createHash } from "node:crypto";
+import type { MikanPage } from "../src/integrations/mikan.js";
+
+export function mikanRelease(title: string, index: number): MikanPage["items"][number] {
+  const downloadUrl = `https://mikan.example/Download/20261007/${index}.torrent`;
+  return {
+    id: createHash("sha256").update(downloadUrl).digest("hex"),
+    title,
+    sourceUrl: `https://mikan.example/Home/Episode/${index}`,
+    downloadUrl,
+    size: 512 * 2 ** 20,
+    publishedAt: "2026-10-07T12:30:00",
+  };
+}
 
 export function transferRecord(id: string): TransferRecord {
   const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -83,6 +96,22 @@ export function resource(title: string, index = 1): Resource {
 }
 
 export class FakeBackend implements MediaBackend {
+  mikanQueries: Array<{ keyword: string; group?: string }> = [];
+  mikanReleases = [
+    mikanRelease("[喵萌奶茶屋] 花织同学 [01][1080p][CHS]", 1),
+    mikanRelease("[喵萌奶茶屋] 花织同学 [02][1080p][CHS]", 2),
+    mikanRelease("[喵萌奶茶屋] 花织同学 [02][1080p][CHT]", 3),
+    mikanRelease("[其他字幕组] 花织同学 [01][720p][CHS]", 4),
+  ];
+  resolvedUrls: string[] = [];
+  async searchMikan(query: { keyword: string; group?: string }): Promise<MikanPage> {
+    this.mikanQueries.push(query);
+    return {
+      searchUrl: `https://mikan.example/Home/Search?${new URLSearchParams({ searchstr: [query.keyword, query.group].filter(Boolean).join(" ") })}`,
+      received: this.mikanReleases.length,
+      items: this.mikanReleases,
+    };
+  }
   transferRecords = [transferRecord("101"), transferRecord("102")];
   transferCalls: TransferCommand[] = [];
   transferErrors = new Map<string, Error>();
@@ -171,10 +200,13 @@ export class FakeBackend implements MediaBackend {
     return selected.infoHash!;
   }
   async resolveLinks(links: string[]): Promise<ResolvedLink[]> {
-    return links.map(() => ({
-      magnet: `magnet:?xt=urn:btih:${"a".repeat(40)}`,
-      infoHash: "a".repeat(40),
-    }));
+    this.resolvedUrls.push(...links);
+    return links.map((link) => {
+      const infoHash = link.startsWith("https://mikan.example/")
+        ? createHash("sha1").update(link).digest("hex")
+        : "a".repeat(40);
+      return { magnet: `magnet:?xt=urn:btih:${infoHash}`, infoHash };
+    });
   }
   async submit115(links: string[]): Promise<string> {
     this.submitCalls++;

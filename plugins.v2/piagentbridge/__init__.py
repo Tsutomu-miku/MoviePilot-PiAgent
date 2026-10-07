@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .config import PluginConfig
 from .hosted import proxy_request
+from .mikan import MikanSearchRequest, search_mikan
 from .runtime import ManagedRuntime, RuntimeInstaller
 from .transfers import (
     TransferPreviewRequest,
@@ -40,7 +41,7 @@ class PiAgentBridge(_PluginBase):
     plugin_name = "Pi Agent 媒体助手"
     plugin_desc = "安装、配置和管理 Pi 媒体助手；网页、飞书共用同一个会话核心。"
     plugin_icon = "ChatGPT_A.png"
-    plugin_version = "1.2.4"
+    plugin_version = "1.3.0"
     plugin_author = "Tsutomu-miku"
     author_url = "https://github.com/Tsutomu-miku"
     plugin_config_prefix = "piagentbridge_"
@@ -104,6 +105,13 @@ class PiAgentBridge(_PluginBase):
 
     def get_api(self) -> List[Dict[str, Any]]:
         return [
+            {
+                "path": "/mikan_search",
+                "endpoint": self.mikan_search,
+                "methods": ["POST"],
+                "auth": "bear",
+                "summary": "使用配置的蜜柑站点和代理直接查询公开资源 RSS",
+            },
             {
                 "path": "/transfer_history/{history_id}",
                 "endpoint": self.transfer_record,
@@ -172,6 +180,10 @@ class PiAgentBridge(_PluginBase):
     def transfer_record(self, history_id: int) -> dict:
         self._require_enabled()
         return {"success": True, "data": record_details(history_id)}
+
+    def mikan_search(self, body: MikanSearchRequest) -> dict:
+        self._require_enabled()
+        return {"success": True, "data": search_mikan(body)}
 
     def preview_transfer(self, body: TransferPreviewRequest) -> dict:
         self._require_enabled()

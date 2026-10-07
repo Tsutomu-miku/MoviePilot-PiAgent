@@ -10,6 +10,7 @@ import { magnetHash, parseLinks } from "../domain/links.js";
 import type { MediaBackend, ResolvedLink } from "../integrations/moviepilot.js";
 import { SearchService } from "./search-service.js";
 import { TransferService } from "./transfer-service.js";
+import { MikanSearchService, publicMikanResource } from "./mikan-search-service.js";
 
 export class TaskService {
   constructor(
@@ -17,6 +18,7 @@ export class TaskService {
     private readonly backend: MediaBackend,
     private readonly search: SearchService,
     private readonly transfers: TransferService,
+    private readonly mikan: MikanSearchService,
   ) {}
 
   private createTask(
@@ -153,6 +155,34 @@ export class TaskService {
       links: resolved.map((item) => item.magnet),
       infoHashes: resolved.map((item) => item.infoHash),
     });
+    return this.publishConfirmation(task, context);
+  }
+
+  async prepareMikanDownload(
+    searchId: string,
+    resourceIds: string[],
+    context: ToolContext,
+    signal?: AbortSignal,
+  ): Promise<View> {
+    const snapshot = this.mikan.getSnapshot(context, searchId);
+    const resources = this.mikan.select(context, searchId, resourceIds);
+    const resolved = await this.resolveLinks(
+      resources.map((item) => item.downloadUrl),
+      signal,
+    );
+    this.mikan.getSnapshot(context, searchId);
+    const task = this.createTask(
+      context,
+      `蜜柑 · ${snapshot.query.keyword} · ${resources.length} 个资源`,
+      "115",
+      {
+        kind: "links",
+        links: resolved.map((item) => item.magnet),
+        infoHashes: resolved.map((item) => item.infoHash),
+        mikan: { searchId, resources: resources.map(publicMikanResource) },
+      },
+    );
+    task.message = "将推送到 115 插件保存目录，请核对下面的发布版本后确认。";
     return this.publishConfirmation(task, context);
   }
 
@@ -328,6 +358,9 @@ export class TaskService {
     }
     if (task.searchId) {
       this.search.getSnapshot(context, task.searchId);
+    }
+    if (task.payload.kind === "links" && task.payload.mikan) {
+      this.mikan.getSnapshot(context, task.payload.mikan.searchId);
     }
     this.store.claimTask(task);
     task.state = "submitting";

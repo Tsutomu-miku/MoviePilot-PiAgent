@@ -303,3 +303,95 @@ test("select failed organization records, inspect the plan and confirm one batch
   ).toBeVisible();
   await expect(page.getByLabel("整理批次明细")).toContainText("MP 报告整理完成");
 });
+
+test("personal Skill can be created, edited, disabled and selected in the existing web conversation", async ({
+  page,
+}) => {
+  await login(page);
+  const id = await page.locator(".conversation-list button.selected").getAttribute("title");
+  const nav = page.getByRole("navigation", { name: "功能" });
+  await nav.getByRole("button", { name: "技能", exact: true }).click();
+  await page.getByRole("button", { name: "新建个人技能" }).click();
+  const content = (body: string) =>
+    `---\nname: browser-anime\ndescription: 浏览器测试的个人动画流程。\n---\n\n${body}`;
+  await page.getByLabel("技能名称", { exact: true }).fill("browser-anime");
+  await page.getByLabel("技能内容（SKILL.md）", { exact: true }).fill(content("私人初版说明"));
+  await page.getByRole("button", { name: "保存技能", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("技能已保存");
+  const skill = page
+    .locator(".skill-list article")
+    .filter({ has: page.getByText("browser-anime", { exact: true }) });
+  await expect(skill.getByText("个人", { exact: true })).toBeVisible();
+  await skill.getByRole("button", { name: "查看与编辑" }).click();
+  await page.getByLabel("技能内容（SKILL.md）", { exact: true }).fill(content("私人新版说明"));
+  await page.getByRole("button", { name: "保存技能", exact: true }).click();
+  await expect(page.getByRole("button", { name: "保存技能", exact: true })).toBeEnabled();
+  await skill.getByLabel("启用 browser-anime", { exact: true }).click();
+  await expect(skill.getByLabel("启用 browser-anime", { exact: true })).not.toBeChecked();
+  await expect(skill.getByRole("button", { name: "在对话中使用" })).toBeDisabled();
+  await page.reload();
+  await nav.getByRole("button", { name: "技能", exact: true }).click();
+  await expect(skill.getByLabel("启用 browser-anime", { exact: true })).not.toBeChecked();
+  await skill.getByRole("button", { name: "查看与编辑" }).click();
+  await expect(page.getByLabel("技能内容（SKILL.md）", { exact: true })).toHaveValue(
+    content("私人新版说明"),
+  );
+  await skill.getByLabel("启用 browser-anime", { exact: true }).click();
+  await expect(skill.getByLabel("启用 browser-anime", { exact: true })).toBeChecked();
+  await expect(skill.getByRole("button", { name: "在对话中使用" })).toBeEnabled();
+  await skill.getByRole("button", { name: "在对话中使用" }).click();
+  await expect(page.locator(".selected-skill")).toContainText("browser-anime");
+  await expect(page.locator(".conversation-list button.selected")).toHaveAttribute("title", id!);
+  const sent = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" && request.url().endsWith(`/conversations/${id}/messages`),
+  );
+  await page.getByLabel("消息", { exact: true }).fill("使用这个技能继续");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  expect((await sent).postDataJSON().skillName).toBe("browser-anime");
+  await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
+  await expect(page.getByText("同一会话中已收到补充条件。", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "取消选择" }).click();
+  await expect(page.locator(".selected-skill")).toHaveCount(0);
+});
+
+test("Mikan direct search filters releases, invalidates old choices and previews a batch to 115", async ({
+  page,
+}) => {
+  await login(page);
+  await page.locator(".composer").getByRole("button", { name: "蜜柑搜索", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("动画关键词", { exact: true }).fill("花织");
+  await dialog.getByRole("button", { name: "搜索蜜柑", exact: true }).click();
+  await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
+  const results = page.getByLabel("蜜柑搜索结果").last();
+  await expect(results).toContainText("本次 RSS 返回 4 条，筛选后 4 条。");
+  await results.getByLabel("字幕组", { exact: true }).fill("喵萌奶茶屋");
+  await results.getByLabel("字幕", { exact: true }).selectOption("CHS");
+  await results.getByLabel("分辨率", { exact: true }).selectOption("1080p");
+  await results.getByRole("button", { name: "搜索蜜柑", exact: true }).click();
+  const filtered = page.getByLabel("蜜柑搜索结果").last();
+  await expect(filtered).toContainText("本次 RSS 返回 4 条，筛选后 2 条。");
+  await expect(
+    page.getByLabel("蜜柑搜索结果").first().getByRole("checkbox").first(),
+  ).toBeDisabled();
+  await expect(filtered.getByRole("checkbox").first()).toBeEnabled();
+  await filtered.getByRole("checkbox").nth(0).check();
+  await filtered.getByRole("checkbox").nth(1).check();
+  await filtered.getByRole("button", { name: "预览到 115（2）", exact: true }).click();
+  await expect(page.getByLabel("下载资源明细")).toContainText("花织同学 [01]");
+  await expect(page.getByLabel("下载资源明细")).toContainText("花织同学 [02]");
+  await expect(page.getByRole("button", { name: "确认执行", exact: true })).toBeEnabled();
+  await page.screenshot({ path: "test-results/mikan-preview-desktop.png", fullPage: true });
+  await page.getByRole("button", { name: "确认执行", exact: true }).click();
+  await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
+  await page
+    .getByRole("navigation", { name: "功能" })
+    .getByRole("button", { name: /^任务/ })
+    .click();
+  const task = page
+    .locator(".task")
+    .filter({ has: page.getByText("蜜柑 · 花织 · 2 个资源", { exact: true }) });
+  await expect(task.getByText("已提交", { exact: true })).toBeVisible();
+  await expect(task.getByLabel("下载资源明细")).toContainText("[01]");
+});

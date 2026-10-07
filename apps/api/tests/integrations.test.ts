@@ -2,7 +2,26 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MoviePilotClient } from "../src/integrations/moviepilot.js";
 import { createLarkChannel, LoggerLevel } from "@larksuiteoapi/node-sdk";
-import { media, resource } from "./fixtures.js";
+import { media, resource, mikanRelease } from "./fixtures.js";
+
+test("Mikan adapter sends the original Chinese query to the native plugin without media lookup", async () => {
+  const query = { keyword: "花织", group: "喵萌奶茶屋" };
+  const page = {
+    searchUrl: "https://mikan.example/Home/Search?searchstr=花织",
+    received: 1,
+    items: [mikanRelease("动画 [01][1080p][CHS]", 1)],
+  };
+  const client = new MoviePilotClient(
+    { baseUrl, apiKey: "integration-key" },
+    async (url, options) => {
+      assert.equal(String(url), `${baseUrl}plugin/PiAgentBridge/mikan_search`);
+      assert.equal(options?.method, "POST");
+      assert.deepEqual(JSON.parse(String(options?.body)), query);
+      return Response.json({ success: true, data: page });
+    },
+  );
+  assert.deepEqual(await client.searchMikan(query), page);
+});
 
 const baseUrl = "http://moviepilot:3000/api/v1/";
 

@@ -151,6 +151,13 @@ class BridgeTests(unittest.TestCase):
             ).status_code,
             200,
         )
+        with patch.object(
+            self.module, "search_mikan", return_value={"received": 0, "items": []}
+        ) as search:
+            result = client.post("/mikan_search", json={"keyword": "花织", "group": "喵萌奶茶屋"})
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(search.call_args.args[0].keyword, "花织")
+            self.assertEqual(client.post("/mikan_search", json={"keyword": ""}).status_code, 422)
 
     def test_page_links_to_moviepilot_without_credentials(self):
         self.plugin._runtime.state = "running"

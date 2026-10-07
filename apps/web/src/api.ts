@@ -6,6 +6,9 @@ import {
   taskSummarySchema,
   decodeUiStream,
   viewSchema,
+  skillSummarySchema,
+  skillDetailSchema,
+  type SkillWrite,
   type MessageInput,
   type Preferences,
   type UiEvent,
@@ -70,6 +73,28 @@ export class ApiClient {
     return this.request("/preferences", preferencesSchema);
   }
 
+  skills() {
+    return this.request("/skills", z.array(skillSummarySchema));
+  }
+
+  skill(name: string) {
+    return this.request(`/skills/${encodeURIComponent(name)}`, skillDetailSchema);
+  }
+
+  saveSkill(name: string, value: SkillWrite) {
+    return this.request(`/skills/${encodeURIComponent(name)}`, skillDetailSchema, {
+      method: "PUT",
+      body: JSON.stringify(value),
+    });
+  }
+
+  activateSkill(name: string, enabled: boolean) {
+    return this.request(`/skills/${encodeURIComponent(name)}/activation`, skillSummarySchema, {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
   savePreferences(value: Preferences) {
     return this.request("/preferences", preferencesSchema, {
       method: "PUT",
@@ -82,6 +107,17 @@ export class ApiClient {
       `/conversations/${conversationId}/resources?${new URLSearchParams({ searchId, offset: String(offset) })}`,
       viewSchema,
     );
+  }
+
+  async mikanResources(conversationId: string, searchId: string, offset: number) {
+    const view = await this.request(
+      `/conversations/${conversationId}/mikan-resources?${new URLSearchParams({ searchId, offset: String(offset) })}`,
+      viewSchema,
+    );
+    if (view.kind !== "mikan") {
+      throw new Error("蜜柑 API 返回了错误的视图类型");
+    }
+    return view;
   }
 
   async *send(conversationId: string, input: MessageInput): AsyncGenerator<UiEvent> {

@@ -17,7 +17,7 @@ from urllib.request import ProxyHandler, build_opener
 
 import requests
 
-RUNTIME_VERSION = "1.2.4"
+RUNTIME_VERSION = "1.3.0"
 RUNTIME_PORT = 8787
 
 

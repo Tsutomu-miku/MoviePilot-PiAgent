@@ -19,6 +19,7 @@ import {
   type TransferHistory,
 } from "./moviepilot-contracts.js";
 import { normalizeMedia, normalizeResource } from "../domain/resources.js";
+import { mikanPageSchema, type MikanPage } from "./mikan.js";
 import {
   transferRecordSchema,
   transferPlanSchema,
@@ -47,6 +48,7 @@ export interface DownloadResult {
 }
 
 export interface MediaBackend {
+  searchMikan(query: { keyword: string; group?: string }, signal?: AbortSignal): Promise<MikanPage>;
   listTransferFailures(query: TransferQuery, signal?: AbortSignal): Promise<TransferPage>;
   getTransferRecord(id: string, signal?: AbortSignal): Promise<TransferRecord>;
   previewTransfer(command: TransferCommand, signal?: AbortSignal): Promise<TransferPlan>;
@@ -213,6 +215,17 @@ export class MoviePilotClient implements MediaBackend {
     const params = new URLSearchParams({ title: query, count: "30" });
     const result = await this.request(`media/search?${params}`, z.array(mpMediaSchema), { signal });
     return result.map(normalizeMedia);
+  }
+
+  searchMikan(
+    query: { keyword: string; group?: string },
+    signal?: AbortSignal,
+  ): Promise<MikanPage> {
+    return this.envelope("plugin/PiAgentBridge/mikan_search", mikanPageSchema, {
+      method: "POST",
+      body: query,
+      signal,
+    });
   }
 
   async searchResources(

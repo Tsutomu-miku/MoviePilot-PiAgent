@@ -1,13 +1,20 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { UserAction } from "@mp-pi/contracts";
+import type { UserAction, SkillSummary } from "@mp-pi/contracts";
 import { ApiClient } from "./api";
 import { useChat } from "./hooks/useChat";
 import { Chat } from "./components/Chat";
 import { TaskList } from "./components/TaskList";
 import { PreferencesPanel } from "./components/PreferencesPanel";
+import { SkillsPanel } from "./components/SkillsPanel";
 
-type Tab = "chat" | "tasks" | "preferences";
+type Tab = "chat" | "tasks" | "preferences" | "skills";
+const headings: Record<Tab, { title: string; description: string }> = {
+  chat: { title: "对话", description: "继续补充条件，保持在同一会话中" },
+  tasks: { title: "任务", description: "依据后端进度和媒体库更新" },
+  preferences: { title: "偏好", description: "明确保存的默认要求" },
+  skills: { title: "技能", description: "查看、编辑和启用你的个人操作说明" },
+};
 
 function Login({ onLogin }: { onLogin(token: string): void }) {
   const [token, setToken] = useState("");
@@ -65,6 +72,7 @@ function Workspace({ token, onLogout }: { token: string; onLogout?(): void }) {
   const client = useQueryClient();
   const [selectedId, setSelectedId] = useState<string>();
   const [tab, setTab] = useState<Tab>("chat");
+  const [selectedSkill, setSelectedSkill] = useState<SkillSummary>();
   const chat = useChat(api);
   const conversations = useQuery({
     queryKey: ["conversations"],
@@ -128,6 +136,9 @@ function Workspace({ token, onLogout }: { token: string; onLogout?(): void }) {
           >
             偏好
           </button>
+          <button className={tab === "skills" ? "selected" : ""} onClick={() => setTab("skills")}>
+            技能
+          </button>
         </nav>
         <p className="sidebar-label">会话</p>
         <div className="conversation-list">
@@ -155,16 +166,8 @@ function Workspace({ token, onLogout }: { token: string; onLogout?(): void }) {
       <main className="main">
         <header className="topbar">
           <div>
-            <h1>
-              {tab === "chat" ? (active?.title ?? "对话") : tab === "tasks" ? "任务" : "偏好"}
-            </h1>
-            <p>
-              {tab === "chat"
-                ? "继续补充条件，保持在同一会话中"
-                : tab === "tasks"
-                  ? "依据后端进度和媒体库更新"
-                  : "明确保存的默认要求"}
-            </p>
+            <h1>{tab === "chat" ? (active?.title ?? "对话") : headings[tab].title}</h1>
+            <p>{headings[tab].description}</p>
           </div>
           <span className="connection">● 个人工作区</span>
         </header>
@@ -185,8 +188,10 @@ function Workspace({ token, onLogout }: { token: string; onLogout?(): void }) {
               conversationId={activeId}
               api={api}
               pending={chat.pending}
+              selectedSkill={selectedSkill?.name}
+              onClearSkill={() => setSelectedSkill(undefined)}
               onSend={(text, value) => {
-                void chat.send(activeId, text, value);
+                void chat.send(activeId, text, value, value ? undefined : selectedSkill?.name);
               }}
             />
           ) : (
@@ -227,6 +232,23 @@ function Workspace({ token, onLogout }: { token: string; onLogout?(): void }) {
           </section>
         )}
         {tab === "preferences" && <PreferencesPanel api={api} />}
+        {tab === "skills" && (
+          <SkillsPanel
+            api={api}
+            onUse={(skill) => {
+              setSelectedSkill(skill);
+              setTab("chat");
+              if (!activeId) {
+                create.mutate();
+              }
+            }}
+            onDisable={(name) => {
+              if (selectedSkill?.name === name) {
+                setSelectedSkill(undefined);
+              }
+            }}
+          />
+        )}
       </main>
     </div>
   );

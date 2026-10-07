@@ -5,7 +5,12 @@ import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import rateLimit from "@fastify/rate-limit";
 import { z, ZodError } from "zod";
-import { messageInputSchema, preferencesSchema } from "@mp-pi/contracts";
+import {
+  messageInputSchema,
+  preferencesSchema,
+  skillNameSchema,
+  skillWriteSchema,
+} from "@mp-pi/contracts";
 import type { AgentRuntime } from "../core/runtime.js";
 import { AppError } from "../core/errors.js";
 import { publicTask } from "../domain/types.js";
@@ -22,6 +27,7 @@ export interface AppOptions {
 }
 const conversationParams = z.object({ id: z.string().uuid() });
 const taskQuery = z.object({ conversationId: z.string().uuid().optional() });
+const skillParams = z.object({ name: skillNameSchema });
 
 export async function createApp(options: AppOptions) {
   const app = Fastify({
@@ -62,7 +68,21 @@ export async function createApp(options: AppOptions) {
   });
   const identity = (id: string) => ({ userId: options.ownerId, conversationId: id });
 
-  app.get("/api/health", async () => ({ status: "ok", version: "1.2.4" }));
+  app.get("/api/health", async () => ({ status: "ok", version: "1.3.0" }));
+  app.get("/api/skills", async () => options.runtime.skills.list(options.ownerId));
+  app.get("/api/skills/:name", async (request) => {
+    const { name } = skillParams.parse(request.params);
+    return options.runtime.skills.get(options.ownerId, name);
+  });
+  app.put("/api/skills/:name", async (request) => {
+    const { name } = skillParams.parse(request.params);
+    return options.runtime.skills.save(options.ownerId, name, skillWriteSchema.parse(request.body));
+  });
+  app.put("/api/skills/:name/activation", async (request) => {
+    const { name } = skillParams.parse(request.params);
+    const { enabled } = z.strictObject({ enabled: z.boolean() }).parse(request.body);
+    return options.runtime.skills.setEnabled(options.ownerId, name, enabled);
+  });
   app.get("/api/conversations", async () =>
     options.runtime.store.listConversations(options.ownerId),
   );
@@ -141,6 +161,14 @@ export async function createApp(options: AppOptions) {
       .object({ searchId: z.string().uuid(), offset: z.coerce.number().int().nonnegative() })
       .parse(request.query);
     return options.runtime.search.listResources(identity(id), query.searchId, query.offset);
+  });
+  app.get("/api/conversations/:id/mikan-resources", async (request) => {
+    const { id } = conversationParams.parse(request.params);
+    options.runtime.store.getConversation(identity(id));
+    const query = z
+      .strictObject({ searchId: z.string().uuid(), offset: z.coerce.number().int().nonnegative() })
+      .parse(request.query);
+    return options.runtime.mikan.listResources(identity(id), query.searchId, query.offset);
   });
   if (options.webDir && existsSync(join(options.webDir, "index.html"))) {
     await app.register(fastifyStatic, { root: options.webDir });

@@ -18,7 +18,12 @@ export function useChat(api: ApiClient) {
   const [pending, setPending] = useState<PendingReply[]>([]);
   const [error, setError] = useState("");
 
-  async function send(conversationId: string, text: string, action?: UserAction): Promise<void> {
+  async function send(
+    conversationId: string,
+    text: string,
+    action?: UserAction,
+    skillName?: string,
+  ): Promise<void> {
     const requestId = uuid();
     const placeholder: PendingReply = {
       id: requestId,
@@ -73,7 +78,7 @@ export function useChat(api: ApiClient) {
       setPending((current) => current.filter((item) => item.id !== requestId));
     };
     try {
-      for await (const event of api.send(conversationId, { requestId, text, action })) {
+      for await (const event of api.send(conversationId, { requestId, text, action, skillName })) {
         switch (event.type) {
           case "text_start":
             update({ text: "", status: "正在回复…" });

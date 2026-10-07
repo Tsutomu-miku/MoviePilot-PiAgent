@@ -4,6 +4,7 @@ import { ApiClient } from "../api";
 import { ResourceView } from "./ResourceView";
 import { TaskList } from "./TaskList";
 import { TransferView } from "./TransferView";
+import { MikanView } from "./MikanView";
 
 interface Props {
   views: View[];
@@ -13,6 +14,7 @@ interface Props {
   tasks: TaskSummary[];
   currentSearchId?: string;
   currentTransferSearchId?: string;
+  currentMikanSearchId?: string;
   onAction(action: UserAction, label: string): void;
 }
 
@@ -25,6 +27,7 @@ export function MessageViews({
   tasks,
   currentSearchId,
   currentTransferSearchId,
+  currentMikanSearchId,
 }: Props) {
   const [season, setSeason] = useState("1");
   function currentTask(task: TaskSummary): TaskSummary {
@@ -35,6 +38,18 @@ export function MessageViews({
     <div className="message-views">
       {views.map((view, index) => {
         switch (view.kind) {
+          case "mikan":
+            return (
+              <MikanView
+                key={view.searchId}
+                view={view}
+                api={api}
+                conversationId={conversationId}
+                busy={busy}
+                current={view.searchId === currentMikanSearchId}
+                onAction={onAction}
+              />
+            );
           case "transfer_failures":
             return (
               <TransferView

@@ -14,7 +14,14 @@ import type {
   View,
 } from "@mp-pi/contracts";
 import { messageId } from "@mp-pi/contracts";
-import type { Identity, Media, SearchSnapshot, Task, TransferSnapshot } from "../domain/types.js";
+import type {
+  Identity,
+  Media,
+  SearchSnapshot,
+  Task,
+  TransferSnapshot,
+  MikanSnapshot,
+} from "../domain/types.js";
 import * as schema from "../db/schema.js";
 import { ConflictError, NotFoundError } from "./errors.js";
 
@@ -30,7 +37,12 @@ const ownedState = (identity: Identity) =>
   );
 const requestKey = (input: AgentInput) =>
   and(eq(schema.requests.userId, input.userId), eq(schema.requests.id, input.requestId));
-const requestBody = ({ requestId, text, action }: AgentInput) => ({ requestId, text, action });
+const requestBody = ({ requestId, text, action, skillName }: AgentInput) => ({
+  requestId,
+  text,
+  action,
+  skillName,
+});
 
 export class StateStore {
   private readonly native: Database.Database;
@@ -247,6 +259,22 @@ export class StateStore {
     return (
       this.db.select().from(schema.states).where(ownedState(identity)).get()?.transfers ?? undefined
     );
+  }
+  getMikanSearch(identity: Identity): MikanSnapshot | undefined {
+    return (
+      this.db.select().from(schema.states).where(ownedState(identity)).get()?.mikanSearch ??
+      undefined
+    );
+  }
+  setMikanSearch(identity: Identity, mikanSearch: MikanSnapshot | null): void {
+    this.db
+      .insert(schema.states)
+      .values({ ...identity, catalog: [], mikanSearch })
+      .onConflictDoUpdate({
+        target: [schema.states.userId, schema.states.conversationId],
+        set: { mikanSearch },
+      })
+      .run();
   }
   setTransfers(identity: Identity, transfers: TransferSnapshot): void {
     this.db

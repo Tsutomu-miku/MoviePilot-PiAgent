@@ -5,6 +5,7 @@ const titles: Record<View["kind"], string> = {
   transfer_failures: "整理失败记录",
   media: "媒体搜索结果",
   resources: "资源搜索结果",
+  mikan: "蜜柑搜索结果",
   confirmation: "确认操作",
   tasks: "任务状态",
   subscriptions: "订阅",
@@ -31,6 +32,30 @@ function actions(items: object[]): object {
 export function viewCard(view: View, conversationId: string): object {
   const elements: object[] = [];
   switch (view.kind) {
+    case "mikan":
+      elements.push(
+        markdown(
+          `蜜柑 · ${view.query.keyword}\n本次 RSS 返回 ${view.received} 条，筛选后 ${view.total} 条。\n[在蜜柑打开](${view.searchUrl})`,
+        ),
+      );
+      for (const resource of view.items.slice(0, 8)) {
+        elements.push(
+          markdown(
+            `${resource.title}\n${resource.sizeGiB} GiB · ${resource.tags.subtitles.join(" / ")}\n[发布详情](${resource.sourceUrl})`,
+          ),
+        );
+        elements.push(
+          actions([
+            button("预览到 115", conversationId, {
+              type: "prepare_mikan_download",
+              searchId: view.searchId,
+              resourceIds: [resource.id],
+            }),
+          ]),
+        );
+      }
+      elements.push(markdown("完整结果可在网页勾选，也可以继续用文字指定字幕组、版本或集数。"));
+      break;
     case "transfer_failures":
       elements.push(markdown(`整理失败共 ${view.total} 条 · 第 ${view.page} 页`));
       for (const item of view.items.slice(0, 10)) {
@@ -124,6 +149,13 @@ export function viewCard(view: View, conversationId: string): object {
             markdown(`另有 ${item.files.length - 10} 个目标文件，完整预览请在网页查看。`),
           );
         }
+      }
+      for (const item of task.downloadItems ?? []) {
+        elements.push(
+          markdown(
+            `${item.title}\n${item.sizeGiB} GiB · ${item.tags.subtitles.join(" / ")}\n[发布详情](${item.sourceUrl})`,
+          ),
+        );
       }
       if (task.state === "awaiting_confirmation" && task.confirmationToken) {
         elements.push(
