@@ -140,3 +140,29 @@ test("mobile layout preserves conversation and exposes usable controls", async (
   await expect(page.getByText("同一会话中已收到补充条件。", { exact: true })).toBeVisible();
   await page.screenshot({ path: "test-results/chat-mobile.png", fullPage: true });
 });
+
+test("select failed organization records, inspect the plan and confirm one batch", async ({
+  page,
+}) => {
+  await login(page);
+  await page.locator(".composer").getByRole("button", { name: "整理失败", exact: true }).click();
+  await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
+  const records = page.getByLabel("整理失败记录").last();
+  await expect(records.getByText("整理失败 · 共 2 条")).toBeVisible();
+  await records.getByLabel("选择整理记录 101").check();
+  await records.getByLabel("选择整理记录 102").check();
+  await records.getByRole("button", { name: "预览所选记录" }).click();
+  await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
+  await expect(page.getByLabel("整理批次明细")).toContainText("哈姆奈特.101.mkv");
+  await expect(page.getByRole("button", { name: "确认执行", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "确认执行", exact: true }).click();
+  await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
+  await page
+    .getByRole("navigation", { name: "功能" })
+    .getByRole("button", { name: /^任务/ })
+    .click();
+  await expect(
+    page.getByText("整理完成 2 条，未受理 0 条，待核对 0 条，未执行 0 条。"),
+  ).toBeVisible();
+  await expect(page.getByLabel("整理批次明细")).toContainText("MP 报告整理完成");
+});

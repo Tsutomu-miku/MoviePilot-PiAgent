@@ -66,10 +66,41 @@ export const taskStateSchema = z.enum([
   "cancelled",
 ]);
 export type TaskState = z.infer<typeof taskStateSchema>;
+export const transferItemStateSchema = z.enum([
+  "ready",
+  "submitting",
+  "completed",
+  "failed",
+  "unknown",
+]);
+export const transferSummarySchema = z.object({
+  id: z.string().regex(/^\d+$/),
+  filename: z.string(),
+  title: z.string(),
+  error: z.string(),
+  date: z.string(),
+  identification: z
+    .object({
+      media: mediaSummarySchema,
+      season: z.number().optional(),
+      episodes: z.array(z.number()).optional(),
+    })
+    .optional(),
+});
+export type TransferSummary = z.infer<typeof transferSummarySchema>;
+export const transferTaskItemSchema = z.object({
+  historyId: z.string(),
+  filename: z.string(),
+  files: z.array(z.object({ filename: z.string(), targetFilename: z.string() })),
+  title: z.string(),
+  state: transferItemStateSchema,
+  message: z.string(),
+  cleanupTarget: z.boolean(),
+});
 export const taskSummarySchema = z.object({
   id: z.string(),
   conversationId: z.string(),
-  kind: z.enum(["download", "subscription", "subscription_change"]),
+  kind: z.enum(["download", "subscription", "subscription_change", "transfer_retry"]),
   title: z.string(),
   destination: destinationSchema,
   state: taskStateSchema,
@@ -79,9 +110,19 @@ export const taskSummarySchema = z.object({
   message: z.string(),
   confirmationToken: z.string().optional(),
   playUrl: z.string().optional(),
+  transferItems: z.array(transferTaskItemSchema).optional(),
 });
 export type TaskSummary = z.infer<typeof taskSummarySchema>;
 export const viewSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("transfer_failures"),
+    title: z.string().optional(),
+    searchId: z.string().uuid(),
+    page: z.number().int(),
+    count: z.number().int(),
+    total: z.number().int(),
+    items: z.array(transferSummarySchema),
+  }),
   z.object({ kind: z.literal("media"), items: z.array(mediaSummarySchema) }),
   z.object({
     kind: z.literal("resources"),
@@ -114,6 +155,16 @@ export const viewSchema = z.discriminatedUnion("kind", [
 ]);
 export type View = z.infer<typeof viewSchema>;
 export const actionSchema = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.literal("transfer_failures"),
+    title: z.string().max(200).optional(),
+    page: z.number().int().positive().default(1),
+  }),
+  z.strictObject({
+    type: z.literal("prepare_transfer_retry"),
+    searchId: z.string().uuid(),
+    historyIds: z.array(z.string().regex(/^\d+$/)).min(1).max(20),
+  }),
   z.strictObject({
     type: z.literal("resources"),
     mediaKey: z.string().min(1).max(100),

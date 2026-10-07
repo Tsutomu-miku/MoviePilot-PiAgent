@@ -20,6 +20,27 @@ import type {
   Subscription,
   TransferHistory,
 } from "../src/integrations/moviepilot-contracts.js";
+import type {
+  TransferCommand,
+  TransferQuery,
+  TransferRecord,
+  TransferPlan,
+} from "../src/integrations/transfers.js";
+import { createHash } from "node:crypto";
+
+export function transferRecord(id: string): TransferRecord {
+  const digest = (value: string) => createHash("sha256").update(value).digest("hex");
+  return {
+    id,
+    filename: `Hamnet.${id}.mkv`,
+    title: "",
+    error: "未识别到媒体信息",
+    date: "2026-10-07 12:00:00",
+    revision: digest(`revision-${id}`),
+    sourceKey: digest(`source-${id}`),
+    cleanupTarget: false,
+  };
+}
 
 export const projectDir = resolve(
   import.meta.dirname,
@@ -62,6 +83,48 @@ export function resource(title: string, index = 1): Resource {
 }
 
 export class FakeBackend implements MediaBackend {
+  transferRecords = [transferRecord("101"), transferRecord("102")];
+  transferCalls: TransferCommand[] = [];
+  transferErrors = new Map<string, Error>();
+  async listTransferFailures(query: TransferQuery) {
+    return {
+      ...query,
+      total: this.transferRecords.length,
+      items: this.transferRecords.slice((query.page - 1) * query.count, query.page * query.count),
+    };
+  }
+  async getTransferRecord(id: string) {
+    const record = this.transferRecords.find((item) => item.id === id);
+    if (!record) {
+      throw new Error("Record missing");
+    }
+    return record;
+  }
+  async previewTransfer(command: TransferCommand): Promise<TransferPlan> {
+    const record = await this.getTransferRecord(command.historyId);
+    return {
+      planHash: record.revision,
+      cleanupTarget: record.cleanupTarget,
+      files: [
+        {
+          sourceKey: record.sourceKey,
+          filename: record.filename,
+          targetFilename: `哈姆奈特.${record.id}.mkv`,
+          title: command.identification?.media.title ?? "哈姆奈特",
+          season: null,
+          episode: null,
+        },
+      ],
+    };
+  }
+  async retryTransfer(command: TransferCommand, _planHash: string): Promise<boolean> {
+    this.transferCalls.push(command);
+    const error = this.transferErrors.get(command.historyId);
+    if (error) {
+      throw error;
+    }
+    return true;
+  }
   resources = [
     resource("Hamnet.2025.2160p.WEB-DL.DDP5.1.CHS", 1),
     resource("Hamnet.2025.1080p.BluRay.DTS5.1.EN", 2),

@@ -14,7 +14,7 @@ import type {
   Preferences,
   View,
 } from "@mp-pi/contracts";
-import type { Identity, Media, SearchSnapshot, Task } from "../domain/types.js";
+import type { Identity, Media, SearchSnapshot, Task, TransferSnapshot } from "../domain/types.js";
 import * as schema from "../db/schema.js";
 import { ConflictError, NotFoundError } from "./errors.js";
 
@@ -65,6 +65,17 @@ export class StateStore {
       .all()) {
       this.saveTask({
         ...task.value,
+        payload:
+          task.value.payload.kind === "transfer_retry"
+            ? {
+                ...task.value.payload,
+                items: task.value.payload.items.map((item) =>
+                  item.state === "submitting"
+                    ? { ...item, state: "unknown", message: "服务在整理时中断，请核对 MP" }
+                    : item,
+                ),
+              }
+            : task.value.payload,
         state: "unknown",
         message: "服务在提交过程中中断，请核对后端任务。",
         updatedAt: new Date().toISOString(),
@@ -224,6 +235,21 @@ export class StateStore {
       this.db.select().from(schema.states).where(ownedState(identity)).get()?.search ?? undefined
     );
   }
+  getTransfers(identity: Identity): TransferSnapshot | undefined {
+    return (
+      this.db.select().from(schema.states).where(ownedState(identity)).get()?.transfers ?? undefined
+    );
+  }
+  setTransfers(identity: Identity, transfers: TransferSnapshot): void {
+    this.db
+      .insert(schema.states)
+      .values({ ...identity, catalog: [], transfers })
+      .onConflictDoUpdate({
+        target: [schema.states.userId, schema.states.conversationId],
+        set: { transfers },
+      })
+      .run();
+  }
   setSearch(identity: Identity, search: SearchSnapshot | null): void {
     this.db
       .insert(schema.states)
@@ -275,6 +301,7 @@ export class StateStore {
     destination: string,
     key: string,
     hashes: string[],
+    sourceKeys: string[] = [],
   ): Task | undefined {
     const matchesHash =
       hashes.length > 0
@@ -293,7 +320,16 @@ export class StateStore {
         and(
           eq(schema.tasks.userId, userId),
           sql`json_extract(${schema.tasks.value}, '$.destination') = ${destination}`,
-          or(sql`json_extract(${schema.tasks.value}, '$.submissionKey') = ${key}`, matchesHash),
+          or(
+            sql`json_extract(${schema.tasks.value}, '$.submissionKey') = ${key}`,
+            matchesHash,
+            sourceKeys.length > 0
+              ? sql`EXISTS (SELECT 1 FROM json_each(${schema.tasks.value}, '$.payload.items') AS item WHERE json_extract(item.value, '$.state') != 'failed' AND json_extract(item.value, '$.sourceKey') IN (${sql.join(
+                  sourceKeys.map((sourceKey) => sql`${sourceKey}`),
+                  sql`, `,
+                )}))`
+              : sql`0`,
+          ),
           or(
             inArray(schema.tasks.state, ["awaiting_confirmation", "submitting", "unknown"]),
             and(

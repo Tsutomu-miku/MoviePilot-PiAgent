@@ -291,6 +291,12 @@ small {
 .media-card label {
   max-width: 120px;
 }
+.media-card .transfer-selection {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: none;
+}
 .results .resource {
   background: #fafbfe;
 }

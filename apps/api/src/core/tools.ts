@@ -16,7 +16,7 @@ export function defineTool<S extends z.ZodType>(
     signal?: AbortSignal,
   ) => unknown | Promise<unknown>,
 ): ToolDefinition {
-  const parameters = Type.Unsafe<z.infer<S>>(z.toJSONSchema(schema) as TSchema);
+  const parameters = Type.Unsafe<z.infer<S>>(z.toJSONSchema(schema, { io: "input" }) as TSchema);
   return {
     name,
     label: name,

@@ -11,6 +11,14 @@ export function taskHashes(payload: TaskPayload): string[] {
 export function submissionKey(destination: Destination, payload: TaskPayload): string {
   let identity: unknown[];
   switch (payload.kind) {
+    case "transfer_retry":
+      identity = [
+        payload.kind,
+        payload.items
+          .map((item) => [item.sourceKey, item.plan.planHash])
+          .sort((left, right) => left[0]!.localeCompare(right[0]!)),
+      ];
+      break;
     case "resource":
       identity = [destination, payload.media.key, payload.resource.torrent.enclosure];
       break;

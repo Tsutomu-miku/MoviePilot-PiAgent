@@ -19,7 +19,12 @@ function userText(context: TranscriptContext): string[] {
 }
 test("real Pi SDK discovers Skill and executes scoped custom business tools", async (t) => {
   const f = await fixture(t);
-  assert.deepEqual(f.runtime.getSkillNames(), ["media-request", "preferences", "task-status"]);
+  assert.deepEqual(f.runtime.getSkillNames(), [
+    "media-request",
+    "moviepilot-maintenance",
+    "preferences",
+    "task-status",
+  ]);
   f.runtime.store.setPreferences("owner", { resolution: "2160p" }, "user:以后默认4K");
   const events: UiEvent[] = [];
   f.faux.setResponses([

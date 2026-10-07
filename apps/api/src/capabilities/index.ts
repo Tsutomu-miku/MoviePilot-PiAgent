@@ -4,6 +4,7 @@ import { createSkillTools } from "./skills.js";
 import { createPreferenceTools } from "./preferences.js";
 import { createMediaTools } from "./media.js";
 import { createTaskTools } from "./tasks.js";
+import { createMoviePilotTools } from "./moviepilot.js";
 
 export function createTools(services: ToolServices): ToolDefinition[] {
   return [
@@ -11,5 +12,6 @@ export function createTools(services: ToolServices): ToolDefinition[] {
     ...createPreferenceTools(services),
     ...createMediaTools(services),
     ...createTaskTools(services),
+    ...createMoviePilotTools(services),
   ];
 }

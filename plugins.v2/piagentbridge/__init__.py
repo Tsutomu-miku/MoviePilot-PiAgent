@@ -16,6 +16,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .config import PluginConfig
 from .hosted import proxy_request
 from .runtime import ManagedRuntime, RuntimeInstaller
+from .transfers import (
+    TransferPreviewRequest,
+    TransferRetryRequest,
+    preview_transfer,
+    record_details,
+    retry_transfer,
+)
 
 
 class ResolveLinksRequest(BaseModel):
@@ -33,7 +40,7 @@ class PiAgentBridge(_PluginBase):
     plugin_name = "Pi Agent 媒体助手"
     plugin_desc = "安装、配置和管理 Pi 媒体助手；网页、飞书共用同一个会话核心。"
     plugin_icon = "ChatGPT_A.png"
-    plugin_version = "1.1.1"
+    plugin_version = "1.2.0"
     plugin_author = "Tsutomu-miku"
     author_url = "https://github.com/Tsutomu-miku"
     plugin_config_prefix = "piagentbridge_"
@@ -98,6 +105,27 @@ class PiAgentBridge(_PluginBase):
     def get_api(self) -> List[Dict[str, Any]]:
         return [
             {
+                "path": "/transfer_history/{history_id}",
+                "endpoint": self.transfer_record,
+                "methods": ["GET"],
+                "auth": "bear",
+                "summary": "读取指定失败整理记录",
+            },
+            {
+                "path": "/transfer_retry/preview",
+                "endpoint": self.preview_transfer,
+                "methods": ["POST"],
+                "auth": "bear",
+                "summary": "预览失败记录的重新整理计划",
+            },
+            {
+                "path": "/transfer_retry",
+                "endpoint": self.retry_transfer,
+                "methods": ["POST"],
+                "auth": "bear",
+                "summary": "按已确认的预览同步重新整理失败记录",
+            },
+            {
                 "path": "/download_states",
                 "endpoint": self.download_states,
                 "methods": ["POST"],
@@ -140,6 +168,18 @@ class PiAgentBridge(_PluginBase):
     def _require_enabled(self):
         if not self._enabled:
             raise HTTPException(status_code=503, detail="请先启用 Pi Agent 桥接插件")
+
+    def transfer_record(self, history_id: int) -> dict:
+        self._require_enabled()
+        return {"success": True, "data": record_details(history_id)}
+
+    def preview_transfer(self, body: TransferPreviewRequest) -> dict:
+        self._require_enabled()
+        return {"success": True, "data": preview_transfer(body)}
+
+    def retry_transfer(self, body: TransferRetryRequest) -> dict:
+        self._require_enabled()
+        return {"success": True, "data": retry_transfer(body)}
 
     def download_states(self, body: DownloadStatesRequest) -> dict:
         self._require_enabled()

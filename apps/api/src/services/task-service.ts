@@ -9,12 +9,14 @@ import { taskHashes, submissionKey } from "../domain/task-identity.js";
 import { magnetHash, parseLinks } from "../domain/links.js";
 import type { MediaBackend, ResolvedLink } from "../integrations/moviepilot.js";
 import { SearchService } from "./search-service.js";
+import { TransferService } from "./transfer-service.js";
 
 export class TaskService {
   constructor(
     private readonly store: StateStore,
     private readonly backend: MediaBackend,
     private readonly search: SearchService,
+    private readonly transfers: TransferService,
   ) {}
 
   private createTask(
@@ -25,7 +27,15 @@ export class TaskService {
   ): Task {
     const key = submissionKey(destination, payload);
     const hashes = taskHashes(payload);
-    const duplicate = this.store.findDuplicateTask(context.userId, destination, key, hashes);
+    const sourceKeys =
+      payload.kind === "transfer_retry" ? payload.items.map((item) => item.sourceKey) : [];
+    const duplicate = this.store.findDuplicateTask(
+      context.userId,
+      destination,
+      key,
+      hashes,
+      sourceKeys,
+    );
     if (duplicate) {
       throw new ConflictError(`相同资源已有任务：${duplicate.title}，请在任务列表核对`);
     }
@@ -161,6 +171,25 @@ export class TaskService {
     return this.publishConfirmation(task, context);
   }
 
+  async prepareTransferRetry(
+    searchId: string,
+    historyIds: string[],
+    context: ToolContext,
+    signal?: AbortSignal,
+  ): Promise<View> {
+    const items = await this.transfers.preview(searchId, historyIds, context, signal);
+    const task = this.createTask(context, `重新整理 ${items.length} 条失败记录`, "moviepilot", {
+      kind: "transfer_retry",
+      items,
+    });
+    const fileCount = items.reduce((count, item) => count + item.plan.files.length, 0);
+    task.message = `将按 MP 预览整理 ${fileCount} 个文件，请核对识别结果和目标名称。`;
+    if (items.some((item) => item.plan.cleanupTarget)) {
+      task.message += "MP 会清理所选记录的残留目标文件。";
+    }
+    return this.publishConfirmation(task, context);
+  }
+
   async prepareSubscriptionChange(
     subscriptionId: string,
     operation: "pause" | "resume" | "delete",
@@ -209,6 +238,8 @@ export class TaskService {
 
   private async submit(task: Task, signal?: AbortSignal): Promise<string> {
     switch (task.payload.kind) {
+      case "transfer_retry":
+        throw new ConflictError("整理批次必须逐条记录执行结果");
       case "links":
         return this.backend.submit115(task.payload.links, signal);
       case "resource": {
@@ -227,6 +258,45 @@ export class TaskService {
         );
         return task.payload.subscriptionId;
     }
+  }
+
+  private async submitTransfers(task: Task, signal?: AbortSignal): Promise<void> {
+    if (task.payload.kind !== "transfer_retry") {
+      throw new ConflictError("任务不是整理批次");
+    }
+    for (const item of task.payload.items) {
+      if (signal?.aborted) {
+        break;
+      }
+      item.state = "submitting";
+      item.message = "正在重新整理";
+      this.store.saveTask(task);
+      try {
+        const completed = await this.backend.retryTransfer(item, item.plan.planHash, signal);
+        item.state = completed ? "completed" : "unknown";
+        item.message = completed
+          ? "MP 报告整理完成"
+          : "MP 报告整理未全部成功，可能已有部分文件转移，请核对 MP";
+      } catch (error) {
+        item.state = error instanceof BackendRejectedError ? "failed" : "unknown";
+        item.message =
+          item.state === "failed"
+            ? "MP 未接受请求，请重新核对并预览"
+            : "结果不确定，请核对 MP；不会自动重复整理";
+      }
+      this.store.saveTask(task);
+    }
+    const counts = { completed: 0, failed: 0, unknown: 0, ready: 0, submitting: 0 };
+    for (const item of task.payload.items) {
+      counts[item.state]++;
+    }
+    task.state =
+      counts.unknown || counts.ready || counts.submitting
+        ? "unknown"
+        : counts.failed
+          ? "failed"
+          : "completed";
+    task.message = `整理完成 ${counts.completed} 条，未受理 ${counts.failed} 条，待核对 ${counts.unknown} 条，未执行 ${counts.ready} 条。`;
   }
 
   async confirm(
@@ -262,9 +332,13 @@ export class TaskService {
     this.store.claimTask(task);
     task.state = "submitting";
     try {
-      task.backendId = await this.submit(task, signal);
-      task.state = task.kind === "download" ? "submitted" : "completed";
-      task.message = task.kind === "download" ? "后端已受理，正在跟踪实际进度。" : "操作完成";
+      if (task.payload.kind === "transfer_retry") {
+        await this.submitTransfers(task, signal);
+      } else {
+        task.backendId = await this.submit(task, signal);
+        task.state = task.kind === "download" ? "submitted" : "completed";
+        task.message = task.kind === "download" ? "后端已受理，正在跟踪实际进度。" : "操作完成";
+      }
     } catch (error) {
       task.state = error instanceof BackendRejectedError ? "failed" : "unknown";
       task.message =

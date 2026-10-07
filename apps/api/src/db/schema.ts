@@ -1,6 +1,6 @@
 import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import type { AgentReply, MessageInput, Preferences, View } from "@mp-pi/contracts";
-import type { Media, SearchSnapshot, Task } from "../domain/types.js";
+import type { Media, SearchSnapshot, Task, TransferSnapshot } from "../domain/types.js";
 
 export const conversations = sqliteTable(
   "conversations",
@@ -48,6 +48,7 @@ export const states = sqliteTable(
     conversationId: text("conversation_id").notNull(),
     catalog: text("catalog", { mode: "json" }).$type<Media[]>().notNull(),
     search: text("search", { mode: "json" }).$type<SearchSnapshot>(),
+    transfers: text("transfers", { mode: "json" }).$type<TransferSnapshot>(),
   },
   (table) => [primaryKey({ columns: [table.userId, table.conversationId] })],
 );

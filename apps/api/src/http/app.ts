@@ -56,7 +56,7 @@ export async function createApp(options: AppOptions) {
   });
   const identity = (id: string) => ({ userId: options.ownerId, conversationId: id });
 
-  app.get("/api/health", async () => ({ status: "ok", version: "1.1.0" }));
+  app.get("/api/health", async () => ({ status: "ok", version: "1.2.0" }));
   app.get("/api/conversations", async () =>
     options.runtime.store.listConversations(options.ownerId),
   );

@@ -1,5 +1,6 @@
 import type { Criteria, MediaSummary, ResourceSummary, TaskSummary } from "@mp-pi/contracts";
 import type { MpMedia, MpTorrent } from "../integrations/moviepilot-contracts.js";
+import type { TransferCommand, TransferPage, TransferPlan } from "../integrations/transfers.js";
 
 export type { Criteria, Destination, View, UserAction, Preferences } from "@mp-pi/contracts";
 export interface Identity {
@@ -20,7 +21,18 @@ export interface SearchSnapshot {
   resources: Resource[];
   createdAt: string;
 }
+export interface TransferSnapshot extends TransferPage {
+  id: string;
+}
+export interface TransferRetryItem extends TransferCommand {
+  filename: string;
+  sourceKey: string;
+  plan: TransferPlan;
+  state: "ready" | "submitting" | "completed" | "failed" | "unknown";
+  message: string;
+}
 export type TaskPayload =
+  | { kind: "transfer_retry"; items: TransferRetryItem[] }
   | {
       kind: "resource";
       media: Media;
@@ -79,5 +91,20 @@ export function publicTask(task: Task): TaskSummary {
     message: task.message,
     playUrl: task.playUrl,
     confirmationToken: task.state === "awaiting_confirmation" ? task.confirmationToken : undefined,
+    transferItems:
+      task.payload.kind === "transfer_retry"
+        ? task.payload.items.map((item) => ({
+            historyId: item.historyId,
+            filename: item.filename,
+            files: item.plan.files.map((file) => ({
+              filename: file.filename,
+              targetFilename: file.targetFilename,
+            })),
+            title: item.plan.files[0]!.title,
+            state: item.state,
+            message: item.message,
+            cleanupTarget: item.plan.cleanupTarget,
+          }))
+        : undefined,
   };
 }

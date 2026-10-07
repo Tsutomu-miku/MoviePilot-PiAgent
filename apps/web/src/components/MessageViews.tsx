@@ -3,6 +3,7 @@ import type { UserAction, View, TaskSummary } from "@mp-pi/contracts";
 import { ApiClient } from "../api";
 import { ResourceView } from "./ResourceView";
 import { TaskList } from "./TaskList";
+import { TransferView } from "./TransferView";
 
 interface Props {
   views: View[];
@@ -11,6 +12,7 @@ interface Props {
   busy: boolean;
   tasks: TaskSummary[];
   currentSearchId?: string;
+  currentTransferSearchId?: string;
   onAction(action: UserAction, label: string): void;
 }
 
@@ -22,12 +24,23 @@ export function MessageViews({
   onAction,
   tasks,
   currentSearchId,
+  currentTransferSearchId,
 }: Props) {
   const [season, setSeason] = useState("1");
   return (
     <div className="message-views">
       {views.map((view, index) => {
         switch (view.kind) {
+          case "transfer_failures":
+            return (
+              <TransferView
+                key={view.searchId}
+                view={view}
+                busy={busy}
+                current={view.searchId === currentTransferSearchId}
+                onAction={onAction}
+              />
+            );
           case "media":
             return (
               <section key={index} className="media-grid" aria-label="媒体搜索结果">

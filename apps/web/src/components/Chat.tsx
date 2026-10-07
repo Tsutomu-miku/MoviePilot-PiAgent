@@ -31,6 +31,12 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
   ]
     .filter((view) => view.kind === "resources")
     .at(-1)?.searchId;
+  const currentTransferSearchId = [
+    ...(messages.data ?? []).flatMap((message) => message.views),
+    ...active.flatMap((item) => item.views),
+  ]
+    .filter((view) => view.kind === "transfer_failures")
+    .at(-1)?.searchId;
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.data, active.length]);
@@ -64,6 +70,11 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
             <h2>从想看的内容开始</h2>
             <p>可以连续补充名称、清晰度、声道和字幕。下载前会让你确认。</p>
             <div className="button-row">
+              <button
+                onClick={() => onAction({ type: "transfer_failures", page: 1 }, "查询整理失败记录")}
+              >
+                整理失败记录
+              </button>
               <button onClick={() => onSend("搜索电影哈姆奈特")}>搜索电影</button>
               <button onClick={() => setLinksOpen(true)}>粘贴链接到 115</button>
               <button onClick={() => onSend("查看 MoviePilot 原生订阅")}>查看订阅</button>
@@ -82,6 +93,7 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
               onAction={onAction}
               tasks={tasks.data ?? []}
               currentSearchId={currentSearchId}
+              currentTransferSearchId={currentTransferSearchId}
             />
           </article>
         ))}
@@ -97,6 +109,7 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
               onAction={onAction}
               tasks={tasks.data ?? []}
               currentSearchId={currentSearchId}
+              currentTransferSearchId={currentTransferSearchId}
             />
           </article>
         ))}
@@ -119,6 +132,12 @@ export function Chat({ conversationId, api, pending, onSend }: Props) {
         <div className="composer-actions">
           <button type="button" onClick={() => setLinksOpen(true)}>
             粘贴链接到 115
+          </button>
+          <button
+            type="button"
+            onClick={() => onAction({ type: "transfer_failures", page: 1 }, "查询整理失败记录")}
+          >
+            整理失败
           </button>
           <span className="muted">Enter 发送 · Shift+Enter 换行</span>
           <button className="primary" disabled={!draft.trim()} type="submit">

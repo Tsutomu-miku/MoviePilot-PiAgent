@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { basename } from "node:path";
 import type { Criteria } from "@mp-pi/contracts";
 import type { Media, Resource } from "../domain/types.js";
 import { BackendRejectedError, UnknownSubmissionError } from "../core/errors.js";
@@ -18,6 +19,15 @@ import {
   type TransferHistory,
 } from "./moviepilot-contracts.js";
 import { normalizeMedia, normalizeResource } from "../domain/resources.js";
+import {
+  transferRecordSchema,
+  transferPlanSchema,
+  type TransferQuery,
+  type TransferPage,
+  type TransferRecord,
+  type TransferCommand,
+  type TransferPlan,
+} from "./transfers.js";
 
 export interface LibraryResult {
   exists: boolean;
@@ -37,6 +47,10 @@ export interface DownloadResult {
 }
 
 export interface MediaBackend {
+  listTransferFailures(query: TransferQuery, signal?: AbortSignal): Promise<TransferPage>;
+  getTransferRecord(id: string, signal?: AbortSignal): Promise<TransferRecord>;
+  previewTransfer(command: TransferCommand, signal?: AbortSignal): Promise<TransferPlan>;
+  retryTransfer(command: TransferCommand, planHash: string, signal?: AbortSignal): Promise<boolean>;
   searchMedia(query: string, signal?: AbortSignal): Promise<Media[]>;
   searchResources(media: Media, criteria: Criteria, signal?: AbortSignal): Promise<Resource[]>;
   getDownloading(signal?: AbortSignal): Promise<ActiveDownload[]>;
@@ -360,6 +374,90 @@ export class MoviePilotClient implements MediaBackend {
       { signal },
     );
     return result.list;
+  }
+
+  async listTransferFailures(query: TransferQuery, signal?: AbortSignal): Promise<TransferPage> {
+    const params = new URLSearchParams({
+      page: String(query.page),
+      count: String(query.count),
+      status: "false",
+    });
+    if (query.title) {
+      params.set("title", query.title);
+    }
+    const recordSchema = z.object({
+      id: z.number().int().positive(),
+      src: z.string(),
+      title: z.string().nullable(),
+      errmsg: z.string().nullable(),
+      date: z.string(),
+      status: z.literal(false),
+    });
+    const page = await this.envelope(
+      `history/transfer?${params}`,
+      z.object({ total: z.number().int().nonnegative(), list: z.array(recordSchema) }),
+      { signal },
+    );
+    return {
+      ...query,
+      total: page.total,
+      items: page.list.map((item) => ({
+        id: String(item.id),
+        filename: basename(item.src),
+        title: item.title ?? "",
+        error: item.errmsg ?? "",
+        date: item.date,
+      })),
+    };
+  }
+
+  getTransferRecord(id: string, signal?: AbortSignal): Promise<TransferRecord> {
+    return this.envelope(`plugin/PiAgentBridge/transfer_history/${id}`, transferRecordSchema, {
+      signal,
+    });
+  }
+
+  private transferBody(command: TransferCommand) {
+    const identification = command.identification;
+    return {
+      history_id: Number(command.historyId),
+      revision: command.revision,
+      identification: identification
+        ? {
+            source: identification.media.source,
+            id: identification.media.id,
+            type: identification.media.type,
+            season: identification.season,
+            episodes: identification.episodes,
+          }
+        : undefined,
+    };
+  }
+
+  previewTransfer(command: TransferCommand, signal?: AbortSignal): Promise<TransferPlan> {
+    return this.envelope("plugin/PiAgentBridge/transfer_retry/preview", transferPlanSchema, {
+      method: "POST",
+      body: this.transferBody(command),
+      signal,
+    });
+  }
+
+  async retryTransfer(
+    command: TransferCommand,
+    planHash: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const result = await this.envelope(
+      "plugin/PiAgentBridge/transfer_retry",
+      z.object({ completed: z.boolean() }),
+      {
+        method: "POST",
+        body: { ...this.transferBody(command), plan_hash: planHash },
+        signal,
+        mutation: true,
+      },
+    );
+    return result.completed;
   }
 
   listSubscriptions(signal?: AbortSignal): Promise<Subscription[]> {

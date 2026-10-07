@@ -21,6 +21,37 @@ function actions(items: object[]): object {
 export function viewCard(view: View, conversationId: string): object {
   const elements: object[] = [];
   switch (view.kind) {
+    case "transfer_failures":
+      elements.push(markdown(`整理失败共 ${view.total} 条 · 第 ${view.page} 页`));
+      for (const item of view.items.slice(0, 10)) {
+        elements.push(
+          markdown(
+            `#${item.id} · ${item.filename}\n${item.error}\n${item.identification ? `将识别为：${item.identification.media.title}` : "可用文字指定正确片名和季集"}`,
+          ),
+        );
+        elements.push(
+          actions([
+            button("预览重新整理", conversationId, {
+              type: "prepare_transfer_retry",
+              searchId: view.searchId,
+              historyIds: [item.id],
+            }),
+          ]),
+        );
+      }
+      elements.push(markdown("批量选择可直接说明记录 ID，完整列表也可在网页勾选。"));
+      if (view.page * view.count < view.total) {
+        elements.push(
+          actions([
+            button("下一页", conversationId, {
+              type: "transfer_failures",
+              title: view.title,
+              page: view.page + 1,
+            }),
+          ]),
+        );
+      }
+      break;
     case "media":
       for (const media of view.items.slice(0, 10)) {
         elements.push(markdown(`${media.title} · ${media.year} · ${media.type}`));
@@ -69,6 +100,21 @@ export function viewCard(view: View, conversationId: string): object {
           `${task.title}\n保存到：${task.destination === "115" ? "115" : "MoviePilot"}\n${task.message}`,
         ),
       );
+      for (const item of task.transferItems ?? []) {
+        elements.push(
+          markdown(
+            `#${item.historyId} · ${item.filename}\n${item.title}\n${item.files
+              .slice(0, 10)
+              .map((file) => `${file.filename} → ${file.targetFilename}`)
+              .join("\n")}\n${item.message}`,
+          ),
+        );
+        if (item.files.length > 10) {
+          elements.push(
+            markdown(`另有 ${item.files.length - 10} 个目标文件，完整预览请在网页查看。`),
+          );
+        }
+      }
       if (task.confirmationToken) {
         elements.push(
           actions([
@@ -90,6 +136,15 @@ export function viewCard(view: View, conversationId: string): object {
             `${task.title}\n${stateLabels[task.state]}${task.progress === undefined ? "" : ` · ${task.progress.toFixed(0)}%`} · ${task.message}`,
           ),
         );
+        if (task.transferItems) {
+          elements.push(
+            markdown(
+              task.transferItems
+                .map((item) => `#${item.historyId} · ${item.filename} · ${item.message}`)
+                .join("\n"),
+            ),
+          );
+        }
       }
       break;
     case "subscriptions":

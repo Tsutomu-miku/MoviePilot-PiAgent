@@ -21,6 +21,27 @@ export function TaskList({ items, busy = false, onAction }: Props) {
             {new Date(task.createdAt).toLocaleString()}
           </p>
           <p>{task.message}</p>
+          {task.transferItems && (
+            <ul aria-label="整理批次明细">
+              {task.transferItems.map((item) => (
+                <li key={item.historyId}>
+                  <strong>
+                    #{item.historyId} · {item.filename}
+                  </strong>
+                  <p>{item.title}</p>
+                  <ul>
+                    {item.files.map((file, index) => (
+                      <li key={index}>
+                        {file.filename} → {file.targetFilename}
+                      </li>
+                    ))}
+                  </ul>
+                  <p>{item.message}</p>
+                  {item.cleanupTarget && <small>将清理此记录的残留目标</small>}
+                </li>
+              ))}
+            </ul>
+          )}
           {task.progress !== undefined && (
             <div className="progress-row">
               <progress value={task.progress} max={100} aria-label="下载进度" />
