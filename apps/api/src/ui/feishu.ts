@@ -6,11 +6,10 @@ import type {
   CardActionEvent,
   EventMap,
 } from "@larksuiteoapi/node-sdk";
-import { actionSchema, stateLabels, type AgentInput } from "@mp-pi/contracts";
+import { actionSchema, stateLabels, type AgentInput, type AgentReply } from "@mp-pi/contracts";
 import { AgentRuntime } from "../core/runtime.js";
 import { ConflictError } from "../core/errors.js";
 import type { Task } from "../domain/types.js";
-import { EventBuffer } from "./event-buffer.js";
 import { viewCard } from "./feishu-cards.js";
 
 const cardValueSchema = z.strictObject({ conversationId: z.string().uuid(), action: actionSchema });
@@ -23,8 +22,7 @@ export interface FeishuOptions {
   onError(error: unknown): void;
 }
 
-export interface FeishuTransport
-  extends Pick<LarkChannel, "connect" | "disconnect" | "send" | "stream"> {
+export interface FeishuTransport extends Pick<LarkChannel, "connect" | "disconnect" | "send"> {
   on(handlers: Partial<EventMap>): () => void;
 }
 
@@ -194,47 +192,19 @@ export class FeishuUi {
   }
 
   private async execute(input: AgentInput, chatId: string): Promise<void> {
-    const buffer = new EventBuffer();
-    // Enqueue at receipt time so slow outbound requests cannot reorder user messages.
-    const result = this.runtime.handle(input, { publish: (_input, event) => buffer.push(event) });
-    const completed = result.then(
-      (reply) => {
-        buffer.close();
-        return { reply };
-      },
-      (error) => {
-        buffer.close();
-        return { error };
-      },
-    );
+    // Enqueue before outbound I/O so user messages retain their receipt order.
+    let reply: AgentReply;
     try {
-      await this.channel.stream(chatId, {
-        markdown: async (controller) => {
-          let streamed = false;
-          for await (const event of buffer.read()) {
-            if (event.type === "text_delta") {
-              streamed = true;
-              await controller.append(event.text);
-            } else if (event.type === "reply") {
-              await controller.setContent(event.reply.text || "操作结果如下。");
-            } else if (event.type === "error") {
-              await controller.setContent(event.message);
-            } else if (event.type === "tool_start" && !streamed) {
-              await controller.setContent("正在处理你的请求…");
-            }
-          }
-        },
+      reply = await this.runtime.handle(input);
+    } catch (error) {
+      await this.channel.send(chatId, {
+        text: "请求未能完成，请查看网页会话或服务日志。涉及下载时，请先核对任务状态再继续。",
       });
-      const outcome = await completed;
-      if ("error" in outcome) {
-        throw outcome.error;
-      }
-      for (const view of outcome.reply.views) {
-        await this.channel.send(chatId, { card: viewCard(view, input.conversationId) });
-      }
-    } finally {
-      buffer.close();
-      await completed;
+      throw error;
+    }
+    await this.channel.send(chatId, { text: reply.text || "操作结果如下。" });
+    for (const view of reply.views) {
+      await this.channel.send(chatId, { card: viewCard(view, input.conversationId) });
     }
   }
 

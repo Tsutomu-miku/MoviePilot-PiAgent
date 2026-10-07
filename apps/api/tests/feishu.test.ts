@@ -2,22 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { fauxAssistantMessage, type TranscriptContext } from "@earendil-works/pi-ai";
-import type {
-  EventMap,
-  NormalizedMessage,
-  SendInput,
-  SendOptions,
-  StreamInput,
-} from "@larksuiteoapi/node-sdk";
+import type { EventMap, NormalizedMessage, SendInput, SendOptions } from "@larksuiteoapi/node-sdk";
 import { FeishuUi, type FeishuTransport } from "../src/ui/feishu.js";
 import { fixture, input } from "./fixtures.js";
 
 class FakeChannel implements FeishuTransport {
   handlers: Partial<EventMap> = {};
   sent: Array<{ chatId: string; input: SendInput }> = [];
-  streams: string[] = [];
   disconnected = false;
-  failStream = false;
+  failSend = false;
 
   on(handlers: Partial<EventMap>): () => void {
     this.handlers = handlers;
@@ -30,27 +23,10 @@ class FakeChannel implements FeishuTransport {
     this.disconnected = true;
   }
   async send(chatId: string, message: SendInput, _options?: SendOptions) {
-    this.sent.push({ chatId, input: message });
-    return { messageId: randomUUID() };
-  }
-  async stream(_chatId: string, stream: StreamInput, _options?: SendOptions) {
-    if (this.failStream) {
+    if (this.failSend) {
       throw new Error("outbound unavailable");
     }
-    if (!("markdown" in stream)) {
-      throw new Error("Expected markdown stream");
-    }
-    let text = "";
-    await stream.markdown({
-      messageId: randomUUID(),
-      append: async (chunk) => {
-        text += chunk;
-      },
-      setContent: async (content) => {
-        text = content;
-      },
-    });
-    this.streams.push(text);
+    this.sent.push({ chatId, input: message });
     return { messageId: randomUUID() };
   }
 }
@@ -113,6 +89,10 @@ test("Feishu continuous messages use one persistent conversation despite changin
   );
   assert.match(observed[2]!.join(" "), /哈姆奈特.*Hamnet.*4K5.1/);
   assert.equal(f.runtime.store.listConversations("owner").length, 1);
+  assert.deepEqual(
+    channel.sent,
+    [1, 2, 3].map(() => ({ chatId: "chat-one", input: { text: "收到" } })),
+  );
   channel.handlers.message?.(message("two", "Hamnet"));
   await ui.idle();
   assert.equal(f.faux.state.callCount, 3);
@@ -157,7 +137,7 @@ test("Feishu can explicitly resume a web conversation and rejects cards belongin
 test("Feishu outbound failure leaves the core reply persisted and user identity remains enforced", async (t) => {
   const f = await fixture(t);
   const channel = new FakeChannel();
-  channel.failStream = true;
+  channel.failSend = true;
   const ui = new FeishuUi(f.runtime, channel, {
     ownerId: "owner",
     allowedOpenIds: ["ou_owner"],
@@ -176,6 +156,39 @@ test("Feishu outbound failure leaves the core reply persisted and user identity 
   await ui.idle();
   assert.equal(f.faux.state.callCount, 1);
   assert.equal(f.errors.length, 2);
+  await ui.close();
+});
+
+test("failed Feishu operations report failure instead of leaving the user without a reply", async (t) => {
+  const f = await fixture(t);
+  const channel = new FakeChannel();
+  const ui = new FeishuUi(f.runtime, channel, {
+    ownerId: "owner",
+    allowedOpenIds: ["ou_owner"],
+    allowedGroupIds: [],
+    onError: (error) => {
+      f.errors.push(error);
+    },
+  });
+  await ui.start();
+  f.faux.setResponses([fauxAssistantMessage("收到")]);
+  channel.handlers.message?.(message("one", "检查任务"));
+  await ui.idle();
+  const conversationId = f.runtime.store.getBinding("owner", "feishu:chat-one:ou_owner")!;
+  channel.handlers.cardAction?.({
+    messageId: "card",
+    chatId: "chat-one",
+    operator: { openId: "ou_owner" },
+    action: {
+      tag: "button",
+      value: { conversationId, action: { type: "cancel", taskId: randomUUID() } },
+    },
+    raw: { token: "failed-action-token" },
+  });
+  await ui.idle();
+  assert.match(JSON.stringify(channel.sent.at(-1)), /请求未能完成/);
+  assert.equal(f.errors.length, 1);
+  assert.equal(f.backend.submitCalls, 0);
   await ui.close();
 });
 

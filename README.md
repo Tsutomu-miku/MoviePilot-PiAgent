@@ -73,7 +73,7 @@ MP 原生插件由 Python 加载。`plugins.v2/piagentbridge` 管理版本化运
 
 ## 飞书和 CLI
 
-在插件配置页启用飞书，填写应用凭据和允许使用的用户 `open_id`。使用同一个应用时，先停用旧 FeishuBot。群聊还需填写群 ID 白名单，并 @机器人。应用使用长连接，需订阅消息事件和卡片交互事件，开通消息发送、消息读取以及 CardKit 流式卡片权限。单独运行时使用 `.env` 中的 `FEISHU_*` 配置。
+在插件配置页启用飞书，填写应用凭据和允许使用的用户 `open_id`。使用同一个应用时，先停用旧 FeishuBot。群聊还需填写群 ID 白名单，并 @机器人。应用使用长连接，需订阅消息事件和卡片交互事件，开通消息发送与消息读取权限。回复完成后通过普通消息接口发送文字及操作卡片，不需要 `cardkit:card:write` 流式卡片权限。单独运行时使用 `.env` 中的 `FEISHU_*` 配置。
 
 飞书按 `chat_id + sender open_id` 保存当前会话绑定。回复根消息和卡片变化不会生成新会话。
 
@@ -121,7 +121,7 @@ apps/api/src/domain/        强类型资源、筛选与链接解析
 apps/api/src/services/      搜索快照、确认与任务跟踪
 apps/api/src/integrations/  MoviePilot 外部协议边界
 apps/api/src/http/          Fastify API 与认证
-apps/api/src/ui/            飞书适配器、卡片与事件缓冲
+apps/api/src/ui/            飞书适配器与操作卡片
 apps/api/skills/            按需加载的操作说明
 apps/web/                  React + Vite + TanStack Query
 packages/contracts/        两端共享的 Zod 协议与 SSE 解码
