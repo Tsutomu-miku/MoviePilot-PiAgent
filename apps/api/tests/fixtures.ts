@@ -108,6 +108,7 @@ export class FakeBackend implements MediaBackend {
       files: [
         {
           sourceKey: record.sourceKey,
+          targetKey: createHash("sha256").update(`target-${record.id}`).digest("hex"),
           filename: record.filename,
           targetFilename: `哈姆奈特.${record.id}.mkv`,
           title: command.identification?.media.title ?? "哈姆奈特",

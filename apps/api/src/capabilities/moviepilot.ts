@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { defineTool } from "../core/tools.js";
 import type { ToolServices } from "./types.js";
+import { transferAssignmentSchema } from "../integrations/transfers.js";
 
 const selection = {
   searchId: z.string().uuid(),
@@ -22,15 +23,12 @@ export function createMoviePilotTools({ transfers, tasks }: ToolServices): ToolD
     ),
     defineTool(
       "identify_transfer_records",
-      "Assign a media key returned by search_media to selected failed records. This saves a proposal only; it does not change MP or organize files. Use different calls for different media or episode mappings.",
+      "Assign media and season/episodes PER failed record. Each assignment identifies ONE source file; episodes are the episodes contained in that file, not a list to distribute across files. For four separate episodes use four assignments with episodes [1], [2], [3], [4]. Season 0 supports specials. Saves a proposal only, without changing MP or organizing files.",
       z.strictObject({
-        ...selection,
-        mediaKey: z.string(),
-        season: z.number().int().min(0).max(100).optional(),
-        episodes: z.array(z.number().int().min(1).max(10000)).min(1).max(1000).optional(),
+        searchId: selection.searchId,
+        assignments: z.array(transferAssignmentSchema).min(1).max(20),
       }),
-      ({ searchId, historyIds, mediaKey, season, episodes }, context) =>
-        transfers.identify(searchId, historyIds, mediaKey, season, episodes, context),
+      ({ searchId, assignments }, context) => transfers.identify(searchId, assignments, context),
     ),
     defineTool(
       "prepare_transfer_retry",

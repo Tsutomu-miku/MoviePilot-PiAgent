@@ -3,7 +3,11 @@ import type { View } from "@mp-pi/contracts";
 import type { StateStore } from "../core/store.js";
 import { ConflictError } from "../core/errors.js";
 import type { MediaBackend } from "../integrations/moviepilot.js";
-import type { TransferIdentification, TransferQuery } from "../integrations/transfers.js";
+import type {
+  TransferAssignment,
+  TransferIdentification,
+  TransferQuery,
+} from "../integrations/transfers.js";
 import type {
   Identity,
   ToolContext,
@@ -63,26 +67,26 @@ export class TransferService {
     return view;
   }
 
-  identify(
-    searchId: string,
-    historyIds: string[],
-    mediaKey: string,
-    season: number | undefined,
-    episodes: number[] | undefined,
-    context: ToolContext,
-  ): View {
+  identify(searchId: string, assignments: TransferAssignment[], context: ToolContext): View {
     const snapshot = this.snapshot(context, searchId);
-    const media = this.search.getMedia(context, mediaKey);
-    if (media.type === "电影" && (season !== undefined || episodes !== undefined)) {
-      throw new ConflictError("电影整理不使用季集号");
+    this.select(
+      snapshot,
+      assignments.map((assignment) => assignment.historyId),
+    );
+    const identifications = new Map<string, TransferIdentification>();
+    for (const { historyId, mediaKey, season, episodes } of assignments) {
+      const media = this.search.getMedia(context, mediaKey);
+      if (media.type === "电影" && (season !== undefined || episodes !== undefined)) {
+        throw new ConflictError("电影整理不使用季集号");
+      }
+      identifications.set(historyId, { media: publicMedia(media), season, episodes });
     }
-    const selected = this.select(snapshot, historyIds);
-    const identification: TransferIdentification = { media: publicMedia(media), season, episodes };
     const updated = {
       ...snapshot,
-      items: snapshot.items.map((item) =>
-        selected.has(item.id) ? { ...item, identification } : item,
-      ),
+      items: snapshot.items.map((item) => {
+        const identification = identifications.get(item.id);
+        return identification ? { ...item, identification } : item;
+      }),
     };
     this.invalidate(context);
     this.store.setTransfers(context, updated);
@@ -113,6 +117,7 @@ export class TransferService {
     const snapshot = this.snapshot(context, searchId);
     this.select(snapshot, historyIds);
     const files = new Set<string>();
+    const targets = new Set<string>();
     const result: TransferRetryItem[] = [];
     for (const id of historyIds) {
       const selected = snapshot.items.find((item) => item.id === id)!;
@@ -131,6 +136,12 @@ export class TransferService {
           throw new ConflictError("所选记录包含重复或重叠的源文件，请只保留一条");
         }
         files.add(file.sourceKey);
+        if (targets.has(file.targetKey)) {
+          throw new ConflictError(
+            `多个源文件指向同一目标 ${file.targetFilename}，请逐条修正季集映射后重新预览`,
+          );
+        }
+        targets.add(file.targetKey);
       }
       if (files.size > 200) {
         throw new ConflictError("一次重新整理最多包含 200 个文件，请分批选择");

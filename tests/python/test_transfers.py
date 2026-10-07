@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from fastapi import HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location(
@@ -106,7 +106,7 @@ class TransferTests(unittest.TestCase):
         self.assertTrue(arguments["preview"])
         self.assertFalse(arguments["background"])
         self.assertEqual(arguments["download_hash"], "known-hash")
-        self.assertEqual(arguments["epformat"].detail, "1,2")
+        self.assertEqual(arguments["epformat"].detail, "1-2")
 
     def test_record_revision_and_successful_sources_reject_retries_before_writes(self):
         self.history.status = True
@@ -130,6 +130,7 @@ class TransferTests(unittest.TestCase):
             source="themoviedb", id="123", type="电视剧", season=2, episodes=[3]
         )
         self.request.identification = identification
+        self.item.update(season=2, episode=3, episode_end=None)
         plan = transfers.preview_transfer(self.request)
         self.chain.manual_transfer.reset_mock()
         self.chain.manual_transfer.side_effect = [(True, {"items": [self.item]}), (True, "")]
@@ -161,3 +162,42 @@ class TransferTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             transfers.preview_transfer(self.request)
         self.assertTrue(self.chain.manual_transfer.call_args.kwargs["preview"])
+
+    def test_combined_episode_range_preserves_all_episodes(self):
+        self.request.identification = transfers.TransferIdentification(
+            source="themoviedb", id="207468", type="电视剧", season=0, episodes=[1, 2, 3, 4]
+        )
+        self.item.update(season=0, episode=1, episode_end=4)
+        transfers.preview_transfer(self.request)
+        arguments = self.chain.manual_transfer.call_args.kwargs
+        self.assertEqual(arguments["season"], 0)
+        self.assertEqual(arguments["epformat"].detail, "1-4")
+        self.assertTrue(arguments["preview"])
+
+    def test_episode_range_cannot_silently_include_unrequested_episodes(self):
+        for episodes in ([1, 3], [2, 1], [1, 1]):
+            with self.assertRaises(ValidationError):
+                transfers.TransferIdentification(
+                    source="themoviedb", id="207468", type="电视剧", episodes=episodes
+                )
+
+    def test_preview_must_match_explicit_season_and_episode_mapping(self):
+        self.request.identification = transfers.TransferIdentification(
+            source="themoviedb", id="207468", type="电视剧", season=0, episodes=[3]
+        )
+        for season, episode, episode_end in ((1, 3, None), (0, 1, 2), (0, 3, 4)):
+            self.item.update(season=season, episode=episode, episode_end=episode_end)
+            with self.assertRaises(HTTPException) as error:
+                transfers.preview_transfer(self.request)
+            self.assertIn("与指定映射不符", error.exception.detail)
+        self.assertTrue(
+            all(call.kwargs["preview"] for call in self.chain.manual_transfer.call_args_list)
+        )
+
+    def test_target_key_uses_full_path_without_exposing_it(self):
+        first = transfers.preview_transfer(self.request)["files"][0]
+        self.item["target"] = "/private/library/Other/episode.mkv"
+        second = transfers.preview_transfer(self.request)["files"][0]
+        self.assertEqual(first["targetFilename"], second["targetFilename"])
+        self.assertNotEqual(first["targetKey"], second["targetKey"])
+        self.assertNotIn("/private", str(first) + str(second))

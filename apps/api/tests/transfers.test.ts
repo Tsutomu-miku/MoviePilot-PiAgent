@@ -5,6 +5,7 @@ import { fauxAssistantMessage, fauxToolCall, type TranscriptContext } from "@ear
 import type { TaskSummary, View, UserAction } from "@mp-pi/contracts";
 import { fixture, input, media, transferRecord } from "./fixtures.js";
 import { BackendRejectedError, UnknownSubmissionError } from "../src/core/errors.js";
+import { transferAssignmentSchema } from "../src/integrations/transfers.js";
 
 function action(value: UserAction) {
   return { ...input(randomUUID(), "执行所选操作"), action: value };
@@ -54,8 +55,7 @@ test("Pi reads the MP skill, identifies a failed record and waits for subsequent
       fauxAssistantMessage(
         fauxToolCall("identify_transfer_records", {
           searchId,
-          historyIds: ["101"],
-          mediaKey: media.key,
+          assignments: [{ historyId: "101", mediaKey: media.key }],
         }),
       ),
     () =>
@@ -162,10 +162,10 @@ test("identification assignments survive later searches and restart", async (t) 
     publish: (_view: View) => undefined,
   };
   f.runtime.store.setCatalog(context, [media]);
-  f.runtime.transfers.identify(page.searchId, ["101"], media.key, undefined, undefined, context);
+  f.runtime.transfers.identify(page.searchId, [{ historyId: "101", mediaKey: media.key }], context);
   const other = { ...media, key: "themoviedb:222", id: "222", title: "另一个电影" };
   f.runtime.store.setCatalog(context, [other]);
-  f.runtime.transfers.identify(page.searchId, ["102"], other.key, undefined, undefined, context);
+  f.runtime.transfers.identify(page.searchId, [{ historyId: "102", mediaKey: other.key }], context);
   await f.reopen();
   const items = await f.runtime.transfers.preview(page.searchId, ["101", "102"], context);
   assert.deepEqual(
@@ -173,4 +173,172 @@ test("identification assignments survive later searches and restart", async (t) 
     [media.key, other.key],
   );
   assert.equal(f.backend.transferCalls.length, 0);
+});
+
+test("four specials receive per-file episode mappings despite reverse history order", async (t) => {
+  const f = await fixture(t);
+  const records = [
+    ["4031", 1],
+    ["4007", 2],
+    ["4008", 3],
+    ["4009", 4],
+  ] as const;
+  f.backend.transferRecords = records
+    .map(([id, episode]) => ({
+      ...transferRecord(id),
+      filename: `Kaijuu 8-gou - Narumi no Heijitsu - ${String(episode).padStart(2, "0")}.strm`,
+    }))
+    .reverse();
+  const series = {
+    ...media,
+    key: "themoviedb:207468",
+    id: "207468",
+    title: "怪兽8号",
+    type: "电视剧" as const,
+  };
+  f.backend.searchMedia = async () => [series];
+  let searchId = "";
+  const preview = f.backend.previewTransfer.bind(f.backend);
+  const mappings: Array<{ historyId: string; season?: number; episodes?: number[] }> = [];
+  f.backend.previewTransfer = async (command) => {
+    mappings.push({ historyId: command.historyId, ...command.identification });
+    const plan = await preview(command);
+    const file = plan.files[0]!;
+    file.season = command.identification!.season!;
+    file.episode = command.identification!.episodes![0]!;
+    file.targetFilename = `怪兽8号 - S00E${String(file.episode).padStart(2, "0")}.strm`;
+    return plan;
+  };
+  f.faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("read_skill", { name: "moviepilot-maintenance" })),
+    fauxAssistantMessage(fauxToolCall("get_transfer_failures", {})),
+    (context) => {
+      const view = toolView(context, "get_transfer_failures");
+      assert.ok(view.kind === "transfer_failures");
+      searchId = view.searchId;
+      return fauxAssistantMessage(fauxToolCall("search_media", { query: "怪兽8号" }));
+    },
+    () =>
+      fauxAssistantMessage(
+        fauxToolCall("identify_transfer_records", {
+          searchId,
+          historyIds: records.map(([id]) => id),
+          mediaKey: series.key,
+          season: 0,
+          episodes: [1, 2, 3, 4],
+        }),
+      ),
+    (context) => {
+      const rejected = context.messages.at(-1);
+      assert.ok(rejected?.role === "toolResult" && rejected.isError);
+      return fauxAssistantMessage(
+        fauxToolCall("identify_transfer_records", {
+          searchId,
+          assignments: records.map(([historyId, episode]) => ({
+            historyId,
+            mediaKey: series.key,
+            season: 0,
+            episodes: [episode],
+          })),
+        }),
+      );
+    },
+    () =>
+      fauxAssistantMessage(
+        fauxToolCall("prepare_transfer_retry", { searchId, historyIds: records.map(([id]) => id) }),
+      ),
+    fauxAssistantMessage("已按 01、02、03、04 分别预览为第 0 季 1–4 集，请确认"),
+  ]);
+  const reply = await f.handle(input("specials", "把这四集按 01 02 03 04 映射到第 0 季"));
+  const confirmation = reply.views.find((view) => view.kind === "confirmation");
+  assert.ok(confirmation?.kind === "confirmation");
+  assert.deepEqual(
+    mappings.map(({ historyId, season, episodes }) => ({ historyId, season, episodes })),
+    records.map(([historyId, episode]) => ({ historyId, season: 0, episodes: [episode] })),
+  );
+  assert.deepEqual(
+    confirmation.task.transferItems?.map((item) => item.files[0]!.targetFilename),
+    [
+      "怪兽8号 - S00E01.strm",
+      "怪兽8号 - S00E02.strm",
+      "怪兽8号 - S00E03.strm",
+      "怪兽8号 - S00E04.strm",
+    ],
+  );
+  assert.equal(f.backend.transferCalls.length, 0);
+});
+
+test("conflicting target paths cannot produce a confirmation even with different source files", async (t) => {
+  const f = await fixture(t);
+  const preview = f.backend.previewTransfer.bind(f.backend);
+  f.backend.previewTransfer = async (command) => {
+    const plan = await preview(command);
+    plan.files[0]!.targetKey = "a".repeat(64);
+    plan.files[0]!.targetFilename = "怪兽8号 - S00E01-E02.strm";
+    return plan;
+  };
+  await assert.rejects(prepare(f), /同一目标.*逐条修正/);
+  assert.equal(f.runtime.store.listTasks("owner", "movie").length, 0);
+  assert.equal(f.backend.transferCalls.length, 0);
+});
+
+test("equal target basenames in different directories are allowed", async (t) => {
+  const f = await fixture(t);
+  const preview = f.backend.previewTransfer.bind(f.backend);
+  f.backend.previewTransfer = async (command) => {
+    const plan = await preview(command);
+    plan.files[0]!.targetFilename = "episode.mkv";
+    return plan;
+  };
+  const task = await prepare(f);
+  assert.equal(task.transferItems?.length, 2);
+});
+
+test("invalid assignments cannot partially change existing identifications", async (t) => {
+  const f = await fixture(t);
+  const page = await query(f);
+  const context = {
+    ...input("atomic", "识别"),
+    inputText: "识别",
+    approvedTaskIds: new Set<string>(),
+    publish: (_view: View) => undefined,
+  };
+  f.runtime.store.setCatalog(context, [media]);
+  await assert.rejects(async () =>
+    f.runtime.transfers.identify(
+      page.searchId,
+      [
+        { historyId: "101", mediaKey: media.key },
+        { historyId: "102", mediaKey: "missing" },
+      ],
+      context,
+    ),
+  );
+  assert.ok(
+    f.runtime.store.getTransfers(context)!.items.every((item) => item.identification === undefined),
+  );
+  await assert.rejects(
+    async () =>
+      f.runtime.transfers.identify(
+        page.searchId,
+        [
+          { historyId: "101", mediaKey: media.key },
+          { historyId: "101", mediaKey: media.key },
+        ],
+        context,
+      ),
+    /不同/,
+  );
+});
+
+test("one-file episode ranges are consecutive and ascending", () => {
+  const assignment = { historyId: "101", mediaKey: "themoviedb:207468", season: 0 };
+  assert.ok(transferAssignmentSchema.safeParse({ ...assignment, episodes: [1, 2, 3, 4] }).success);
+  for (const episodes of [
+    [1, 3],
+    [2, 1],
+    [1, 1],
+  ]) {
+    assert.equal(transferAssignmentSchema.safeParse({ ...assignment, episodes }).success, false);
+  }
 });

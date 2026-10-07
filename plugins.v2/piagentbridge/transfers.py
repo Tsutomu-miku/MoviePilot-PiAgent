@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Literal, Optional
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, PositiveInt
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator
 
 
 class TransferIdentification(BaseModel):
@@ -15,6 +15,20 @@ class TransferIdentification(BaseModel):
     type: Literal["电影", "电视剧"]
     season: Optional[int] = Field(default=None, ge=0, le=100)
     episodes: Optional[List[PositiveInt]] = Field(default=None, min_length=1, max_length=1000)
+
+    @field_validator("episodes")
+    @classmethod
+    def consecutive_episodes(cls, episodes):
+        if episodes and any(
+            current != previous + 1 for previous, current in zip(episodes, episodes[1:])
+        ):
+            raise ValueError("一个文件的集号必须连续且递增")
+        return episodes
+
+
+def episode_detail(episodes: List[int]) -> str:
+    # MP treats comma-separated details as the first two endpoints, not an episode list.
+    return str(episodes[0]) if len(episodes) == 1 else f"{episodes[0]}-{episodes[-1]}"
 
 
 class TransferPreviewRequest(BaseModel):
@@ -91,7 +105,7 @@ def historical_episodes(history) -> Optional[str]:
     end = int(match[2]) if match[2] else start
     if end < start or end - start > 1000:
         raise HTTPException(status_code=422, detail="原记录集号范围无效")
-    return ",".join(str(episode) for episode in range(start, end + 1))
+    return str(start) if start == end else f"{start}-{end}"
 
 
 def manual_transfer(history, identification: Optional[TransferIdentification], preview: bool):
@@ -108,7 +122,7 @@ def manual_transfer(history, identification: Optional[TransferIdentification], p
         else historical_season(history)
     )
     episodes = (
-        ",".join(str(episode) for episode in identification.episodes)
+        episode_detail(identification.episodes)
         if identification and identification.episodes
         else historical_episodes(history)
     )
@@ -150,6 +164,21 @@ def transfer_plan(history, identification: Optional[TransferIdentification]) -> 
         or any(not item["success"] or not item["target"] for item in items)
     ):
         raise HTTPException(status_code=422, detail="预览必须包含 1 至 200 个可成功整理的文件")
+    if identification and identification.type == "电视剧":
+        for item in items:
+            if identification.season is not None and item["season"] != identification.season:
+                raise HTTPException(
+                    status_code=422, detail="MP 预览的季号与指定映射不符，请修正后重新预览"
+                )
+            if identification.episodes:
+                start, end = identification.episodes[0], identification.episodes[-1]
+                actual_end = (
+                    item["episode_end"] if item["episode_end"] is not None else item["episode"]
+                )
+                if item["episode"] != start or actual_end != end:
+                    raise HTTPException(
+                        status_code=422, detail="MP 预览的集号与指定映射不符，请修正后重新预览"
+                    )
     plan = [
         {
             key: item[key]
@@ -172,6 +201,7 @@ def transfer_plan(history, identification: Optional[TransferIdentification]) -> 
         "files": [
             {
                 "sourceKey": fingerprint([history.src_storage, item["source"]]),
+                "targetKey": fingerprint(item["target"]),
                 "filename": Path(item["source"]).name,
                 "targetFilename": Path(item["target"]).name,
                 "title": item["title"] or "",

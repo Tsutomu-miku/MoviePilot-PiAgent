@@ -6,11 +6,13 @@ Pi 负责模型工具循环和会话。Skill 按需提供业务流程；工具�
 
 - `skills/moviepilot-maintenance/SKILL.md` 描述查询、修正识别、选择、预览、确认和核对结果的步骤。
 - `capabilities/moviepilot.ts` 注册 `get_transfer_failures`、`identify_transfer_records` 和 `prepare_transfer_retry`。工具没有任意 URL、文件路径或命令参数。
-- `services/transfer-service.ts` 保存当前查询页和识别提案，限制选择范围，调用 MP 的真实预览并排除重复源文件。
+- `services/transfer-service.ts` 保存当前查询页和逐条识别提案，限制选择范围，调用 MP 的真实预览并排除重复源文件与目标路径冲突。
 - `TaskService` 复用统一确认入口，逐条保存整理批次结果。提交结果不确定时保留待核对状态。
 - `integrations/transfers.ts` 声明外部协议，`MoviePilotClient` 只在边界验证响应。
 - Python 桥接通过 MP 的公开 `TransferChain.manual_transfer` 接口执行。提交前重新核对原记录与预览，目录和命名由 MP 规划。
 - `packages/contracts` 定义统一结果和用户操作。网页组件与飞书卡片使用相同 ID 和确认令牌。
+
+`identify_transfer_records` 使用 `assignments` 数组。每项包含一个 `historyId`、搜索返回的 `mediaKey`，以及可选的 `season` 和 `episodes`。例如四个独立番外文件应分别填写 `season: 0`、`episodes: [1]` 到 `[4]`；一个文件包含连续四集时才填写 `[1, 2, 3, 4]`。桥接将合并集转换成 MP 的 `1-4` 格式，并验证实际预览的季集与请求一致。
 
 新增只读查询时，先确认目标 MP 版本的真实接口，在适配器中声明响应类型，再注册工具。工具应返回完成任务所需的事实，避免把凭据、完整文件对象或原始后端负载交给模型。
 
