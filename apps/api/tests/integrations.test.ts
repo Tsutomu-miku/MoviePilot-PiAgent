@@ -1,11 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
-import { once } from "node:events";
 import { MoviePilotClient } from "../src/integrations/moviepilot.js";
 import { createLarkChannel, LoggerLevel } from "@larksuiteoapi/node-sdk";
 import { media, resource } from "./fixtures.js";
-import { viewCard } from "../src/ui/feishu-cards.js";
 
 const baseUrl = "http://moviepilot:3000/api/v1/";
 
@@ -130,65 +127,15 @@ test("empty remote missing list establishes library presence while missing play 
   assert.deepEqual(await client.checkLibrary(media, {}), { exists: true, episodes: undefined });
 });
 
-test("official Feishu SDK exposes normalized events, message sending and shutdown without connecting", async () => {
+test("official Feishu SDK exposes normalized events, streaming and shutdown without connecting", async () => {
   const channel = createLarkChannel({
     appId: "cli_0000000000000000",
     appSecret: "offline-test",
     loggerLevel: LoggerLevel.error,
   });
   assert.equal(typeof channel.on, "function");
-  assert.equal(typeof channel.send, "function");
+  assert.equal(typeof channel.stream, "function");
   await channel.disconnect();
-});
-
-test("official Feishu SDK sends text and operation cards without CardKit permission", async (t) => {
-  const sent: Array<{ msg_type: string; content: string }> = [];
-  const paths: string[] = [];
-  const server = createServer(async (request, response) => {
-    const path = new URL(request.url!, "http://localhost").pathname;
-    paths.push(path);
-    response.setHeader("content-type", "application/json");
-    if (path === "/open-apis/auth/v3/tenant_access_token/internal") {
-      response.end(JSON.stringify({ code: 0, tenant_access_token: "offline-token", expire: 7200 }));
-    } else if (path === "/open-apis/im/v1/messages") {
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) {
-        chunks.push(Buffer.from(chunk));
-      }
-      sent.push(JSON.parse(Buffer.concat(chunks).toString()));
-      response.end(JSON.stringify({ code: 0, data: { message_id: `om_test_${sent.length}` } }));
-    } else {
-      response.end(JSON.stringify({ code: 99991672, msg: "Access denied: cardkit:card:write" }));
-    }
-  });
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  t.after(async () => {
-    server.close();
-    await once(server, "close");
-  });
-  const address = server.address();
-  assert.ok(address && typeof address !== "string");
-  const channel = createLarkChannel({
-    appId: "cli_0000000000000001",
-    appSecret: "offline-test",
-    domain: `http://127.0.0.1:${address.port}`,
-    loggerLevel: LoggerLevel.error,
-  });
-  t.after(() => channel.disconnect());
-  await channel.send("oc_test_chat", { text: "回复已完成" });
-  await channel.send("oc_test_chat", {
-    card: viewCard({ kind: "library", title: "测试电影", exists: true }, "conversation"),
-  });
-  assert.deepEqual(
-    sent.map((item) => item.msg_type),
-    ["text", "interactive"],
-  );
-  assert.equal(JSON.parse(sent[0]!.content).text, "回复已完成");
-  assert.equal(
-    paths.some((path) => path.includes("cardkit")),
-    false,
-  );
 });
 
 test("protocol mismatches fail at the adapter instead of guessing legacy response fields", async () => {
