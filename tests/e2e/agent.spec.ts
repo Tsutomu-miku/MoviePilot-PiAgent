@@ -8,6 +8,25 @@ async function login(page: Page) {
   await expect(page.getByLabel("消息")).toBeVisible();
 }
 
+test("MP hosted page uses its login and relative assets without a second access token", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page
+    .context()
+    .addCookies([{ name: "mp-test-admin", value: "1", url: "http://127.0.0.1:8789" }]);
+  await page.goto("http://127.0.0.1:8789/api/v1/plugin/PiAgentBridge/ui/");
+  await expect(page.getByLabel("访问令牌")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "退出登录" })).toHaveCount(0);
+  await page.getByRole("button", { name: "＋ 新建会话" }).click();
+  await page.getByLabel("消息").fill("补充条件");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(page.getByText("同一会话中已收到补充条件。", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => sessionStorage.getItem("pi-agent-token"))).toBeNull();
+  expect(errors).toEqual([]);
+});
+
 test("search, refine, preview and confirm a download; inspect shared task state", async ({
   page,
 }) => {

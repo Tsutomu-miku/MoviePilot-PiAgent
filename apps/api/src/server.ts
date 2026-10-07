@@ -44,6 +44,7 @@ if (!model || !models.hasConfiguredAuth(config.AGENT_PROVIDER)) {
 const backend = new MoviePilotClient({
   baseUrl: config.MOVIEPILOT_URL,
   accessToken: config.MOVIEPILOT_ACCESS_TOKEN,
+  apiKey: config.MOVIEPILOT_API_KEY,
   username: config.MOVIEPILOT_USERNAME,
   password: config.MOVIEPILOT_PASSWORD,
   downloader: config.MOVIEPILOT_DOWNLOADER,
@@ -76,11 +77,20 @@ const app = await createApp({
   logger: true,
 });
 let stopping = false;
+const parentWatchdog = config.AGENT_PARENT_PID
+  ? setInterval(() => {
+      if (process.ppid !== config.AGENT_PARENT_PID) {
+        void stop().catch(onError);
+      }
+    }, 5000)
+  : undefined;
+parentWatchdog?.unref();
 async function stop(): Promise<void> {
   if (stopping) {
     return;
   }
   stopping = true;
+  clearInterval(parentWatchdog);
   feishu?.stopReceiving();
   const httpClosed = app.close();
   await tracker.close();

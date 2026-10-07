@@ -60,7 +60,7 @@ function Login({ onLogin }: { onLogin(token: string): void }) {
   );
 }
 
-function Workspace({ token, onLogout }: { token: string; onLogout(): void }) {
+function Workspace({ token, onLogout }: { token: string; onLogout?(): void }) {
   const api = useMemo(() => new ApiClient(token), [token]);
   const client = useQueryClient();
   const [selectedId, setSelectedId] = useState<string>();
@@ -146,9 +146,11 @@ function Workspace({ token, onLogout }: { token: string; onLogout(): void }) {
             </button>
           ))}
         </div>
-        <button className="logout" onClick={onLogout}>
-          退出登录
-        </button>
+        {onLogout && (
+          <button className="logout" onClick={onLogout}>
+            退出登录
+          </button>
+        )}
       </aside>
       <main className="main">
         <header className="topbar">
@@ -241,6 +243,9 @@ export function App() {
     sessionStorage.removeItem("pi-agent-token");
     client.clear();
     setToken("");
+  }
+  if (document.querySelector('meta[name="pi-agent-host"][content="moviepilot"]')) {
+    return <Workspace token="" />;
   }
   return token ? <Workspace token={token} onLogout={logout} /> : <Login onLogin={login} />;
 }

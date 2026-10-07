@@ -8,6 +8,7 @@ const environmentSchema = z
     PORT: z.coerce.number().int().min(1).max(65535).default(8787),
     AGENT_DATA_DIR: z.string().default("./data"),
     AGENT_OWNER_ID: z.string().min(1).default("owner"),
+    AGENT_PARENT_PID: z.coerce.number().int().positive().optional(),
     WEB_AUTH_TOKEN: z.string().min(32),
     AGENT_PROVIDER: z.string().min(1),
     AGENT_MODEL: z.string().min(1),
@@ -17,6 +18,7 @@ const environmentSchema = z
     AGENT_MAX_TOKENS: z.coerce.number().int().positive().default(8192),
     MOVIEPILOT_URL: z.url(),
     MOVIEPILOT_ACCESS_TOKEN: z.string().min(1).optional(),
+    MOVIEPILOT_API_KEY: z.string().min(1).optional(),
     MOVIEPILOT_USERNAME: z.string().min(1).optional(),
     MOVIEPILOT_PASSWORD: z.string().min(1).optional(),
     MOVIEPILOT_DOWNLOADER: z.string().min(1).optional(),
@@ -32,11 +34,12 @@ const environmentSchema = z
   .superRefine((value, context) => {
     if (
       !value.MOVIEPILOT_ACCESS_TOKEN &&
+      !value.MOVIEPILOT_API_KEY &&
       !(value.MOVIEPILOT_USERNAME && value.MOVIEPILOT_PASSWORD)
     ) {
       context.addIssue({
         code: "custom",
-        message: "配置 MoviePilot 令牌或账号密码",
+        message: "配置 MoviePilot API Key、令牌或账号密码",
         path: ["MOVIEPILOT_ACCESS_TOKEN"],
       });
     }

@@ -1,6 +1,6 @@
 # MoviePilot Pi Agent
 
-使用 Pi SDK 的 TypeScript 个人媒体助手。网页、飞书和 CLI 共用同一个 Agent 核心；MoviePilot 提供搜索、下载、订阅和媒体库能力，115 复用已有的 RSS 离线下载插件。
+使用 Pi SDK 的 TypeScript 个人媒体助手，以普通 MoviePilot 插件安装和管理。网页、飞书和 CLI 共用同一个 Agent 核心；MoviePilot 提供搜索、下载、订阅和媒体库能力，115 复用已有的 RSS 离线下载插件。
 
 第一版已实现媒体搜索、条件筛选、资源预览与确认、MP/115 提交、下载与入库跟踪、原生订阅管理、长期偏好，以及三个 UI。模型固定为一个明确配置的 provider/model，不包含免费模型池或自动切换。
 
@@ -15,7 +15,21 @@
 
 “本次要 4K”保留在当前会话；“以后默认 4K”才保存为长期偏好。网页偏好页可修改或清除默认条件。
 
-## 运行
+## 在 MoviePilot 安装
+
+1. 把 `https://github.com/Tsutomu-miku/MoviePilot-PiAgent` 加入 MP 插件市场。
+2. 安装 **Pi Agent 媒体助手**。
+3. 在插件配置中填写一个明确的 Provider、模型 ID 和 API Key；自定义服务填写原有端点。
+4. 启用并保存。首次启动自动下载经过 SHA-256 校验的 Node 与依赖，后续启动复用缓存。
+5. 从插件状态页点击“打开 Pi Agent”。网页复用 MP 管理员登录，无需另一个访问令牌。
+
+无需 SSH、单独 Docker 容器、额外端口映射或重复填写 MP 账号密码。插件通过 MP 自带 API Token 调用业务接口，沿用 MP 的 HTTP 代理和 GitHub 镜像设置。
+
+当前 Release 提供 Linux x64 运行时，在 Debian 12 / MP 2.15.6 环境验证。运行时仍是一个由插件托管的 Node 进程；禁用插件时不运行。首次下载约 85 MiB，不在 MP 容器内执行 npm 安装或编译。`runtimes/` 保存带版本的运行时，`agent-data/` 保存 SQLite 和 Pi 会话，均位于 MP 的插件持久数据目录。
+
+模型配置保存到 MP 插件配置；内部访问令牌仅供容器内通信，不放进网页、URL 或浏览器存储。插件停用、重载和 MP 正常关闭都会停止子进程；MP 意外退出后，Node 的父进程监测也会关闭服务。启动失败显示错误，不无限重启或自动重新提交下载。
+
+## 单独运行（开发或独立部署）
 
 要求 Node.js **22.23.1 或更新版本**。推荐在现代 Linux 或提供的 Debian Bookworm 容器中运行，SQLite 驱动版本固定为 better-sqlite3 13.0.3。
 
@@ -45,21 +59,21 @@ Compose 使用 `.env` 和持久卷 `agent-data`。容器以 `node` 用户运行�
 
 构建时可以使用自己的 npm 配置：`docker build --secret id=npmrc,src=/你的路径/.npmrc .`。HTTP 代理按 Docker 自身的配置传入构建，不在 Dockerfile 中设置外部地址。
 
-## MoviePilot 桥接插件
+## MoviePilot 接口
 
-MP 原生插件仍由 Python 加载。`plugins.v2/piagentbridge` 只提供网页入口和缺失的查询/解析 API，不在 MP 进程内启动 Node。
-
-将该目录复制到 MP 的 `/app/app/plugins/piagentbridge`，重载插件后在配置页启用并填写 Agent 网页地址。若仓库可被 MP 插件市场访问，也可按其常规市场流程使用 `package.v2.json`。私有仓库采用目录挂载或复制方式。
+MP 原生插件由 Python 加载。`plugins.v2/piagentbridge` 管理版本化运行时、子进程和网页代理，同时提供业务查询接口。Agent 不占用 MP 的 Python 请求线程执行模型循环。
 
 - `download_states` 查询指定 hash 的实际进度，包含已完成任务。
 - `resolve_links` 复用 `CloudAutoSearch` 的种子解析方法，不提交下载。
 - 两个接口都由 MP 的 Bearer 认证保护。
+- `/ui/` 与其网页 API 使用 MP 资源 Cookie 的管理员认证；写请求校验同源，流式响应不缓冲。
+- Node 仅监听容器内 `127.0.0.1:8787`，网页始终走 MP 已有端口。
 
 115 路由需要已有 **CloudAutoSearch 1.1.0 或更新版本**完成登录和保存目录配置，并需要 **P115StrmHelper** 查询实际离线任务。磁力链接可在 Agent 本地解析 BTIH；公开 torrent URL 通过桥接解析。需要站点 Cookie 的私有种子 URL 不作为公开链接推送到 115。
 
 ## 飞书和 CLI
 
-开启 `FEISHU_ENABLED`，配置应用凭据和允许使用的用户 `open_id`。群聊还需填写群 ID 白名单，并 @机器人。应用使用长连接，需订阅消息事件和卡片交互事件，开通消息发送、消息读取以及 CardKit 流式卡片权限。
+在插件配置页启用飞书，填写应用凭据和允许使用的用户 `open_id`。使用同一个应用时，先停用旧 FeishuBot。群聊还需填写群 ID 白名单，并 @机器人。应用使用长连接，需订阅消息事件和卡片交互事件，开通消息发送、消息读取以及 CardKit 流式卡片权限。单独运行时使用 `.env` 中的 `FEISHU_*` 配置。
 
 飞书按 `chat_id + sender open_id` 保存当前会话绑定。回复根消息和卡片变化不会生成新会话。
 
@@ -91,9 +105,11 @@ npm run build
 npx playwright install chromium
 npm run test:e2e
 python -m pip install -r requirements-dev.txt
-ruff check plugins.v2 tests/python
-ruff format --check plugins.v2 tests/python
+ruff check plugins.v2 tests scripts
+ruff format --check plugins.v2 tests scripts
 python -m unittest discover -s tests/python -v
+npm run package:plugin
+python tests/runtime_process.py work/plugin-release/stage
 ```
 
 测试通过真实 Pi SDK 的官方 faux provider 执行工具循环和恢复逻辑，使用假 MP 后端和假飞书传输。浏览器测试连接完整 Fastify 服务和构建后的 React 页面。测试不调用真实模型、不发送飞书消息、不提交实际下载。
@@ -111,6 +127,8 @@ apps/web/                  React + Vite + TanStack Query
 packages/contracts/        两端共享的 Zod 协议与 SSE 解码
 plugins.v2/piagentbridge/   小型 MP Python 桥接
 ```
+
+`npm run package:plugin` 生成市场插件 ZIP、包含 Node 的平台运行时和校验清单。打包使用本机已经通过测试的 SQLite 原生模块，并验证打包后的 Pi 与 SQLite 可加载；生产环境不现场构建依赖。发布时一起上传 ZIP 和对应运行时到 `PiAgentBridge_v版本` Release，并将该校验清单保存到插件源码目录。
 
 新增能力应在 `capabilities/` 注册声明参数的工具，复用 Pi 执行循环；业务写操作由服务层执行确认和去重。新增 UI 只实现统一事件适配和认证映射，不维护另一份模型历史。Prettier、ESLint 与 Ruff 保持展开、可读的格式；不以减少代码行数为目标。
 

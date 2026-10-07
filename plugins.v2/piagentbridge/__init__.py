@@ -1,11 +1,21 @@
+import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlsplit
 
 from app.chain.download import DownloadChain
+from app.core.config import settings
 from app.core.plugin import PluginManager
+from app.core.security import verify_resource_token
+from app.log import logger
 from app.plugins import _PluginBase
-from fastapi import HTTPException
+from app.schemas import TokenPayload
+from fastapi import Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
+
+from .config import PluginConfig
+from .hosted import proxy_request
+from .runtime import ManagedRuntime, RuntimeInstaller
 
 
 class ResolveLinksRequest(BaseModel):
@@ -20,31 +30,56 @@ class DownloadStatesRequest(BaseModel):
 
 
 class PiAgentBridge(_PluginBase):
-    plugin_name = "Pi Agent 桥接"
-    plugin_desc = "连接独立的 TypeScript Pi Agent，提供下载状态与种子链接解析。"
+    plugin_name = "Pi Agent 媒体助手"
+    plugin_desc = "安装、配置和管理 Pi 媒体助手；网页、飞书共用同一个会话核心。"
     plugin_icon = "ChatGPT_A.png"
-    plugin_version = "1.0.0"
+    plugin_version = "1.1.0"
     plugin_author = "Tsutomu-miku"
     author_url = "https://github.com/Tsutomu-miku"
     plugin_config_prefix = "piagentbridge_"
     plugin_order = 30
     auth_level = 1
+    _runtime = None
 
     def init_plugin(self, config: Optional[dict] = None):
-        values = config or {}
-        self._enabled = values.get("enabled", False)
-        self._agent_url = values.get("agent_url", "")
-        if self._agent_url:
-            parsed = urlsplit(self._agent_url)
-            if parsed.scheme not in ("http", "https") or not parsed.hostname:
-                raise ValueError("Agent 地址必须是 HTTP 或 HTTPS URL")
+        values = PluginConfig.model_validate(config or {})
+        self.stop_service()
+        self._config = values
+        self._enabled = values.enabled
+        data_dir = self.get_data_path()
+        installer = RuntimeInstaller(
+            Path(__file__).parent, data_dir, settings.PROXY, settings.GITHUB_PROXY
+        )
+        self._runtime = ManagedRuntime(data_dir, installer, lambda error: logger.error(error))
+        if values.enabled:
+            environment = values.agent_environment()
+            environment.update(
+                {
+                    "MOVIEPILOT_URL": "http://127.0.0.1:%s%s/"
+                    % (settings.PORT, settings.API_V1_STR),
+                    "MOVIEPILOT_API_KEY": settings.API_TOKEN,
+                    "NO_PROXY": ",".join(
+                        filter(
+                            None,
+                            [
+                                os.getenv("NO_PROXY", os.getenv("no_proxy", "")),
+                                "localhost,127.0.0.1",
+                            ],
+                        )
+                    ),
+                }
+            )
+            if settings.PROXY_HOST:
+                environment["HTTP_PROXY"] = settings.PROXY_HOST
+                environment["HTTPS_PROXY"] = settings.PROXY_HOST
+            self._runtime.start(environment)
 
     def get_state(self) -> bool:
         return self._enabled
 
     def stop_service(self):
-        # This plugin has no threads, subprocesses or background services.
-        pass
+        if self._runtime:
+            self._runtime.stop()
 
     @staticmethod
     def get_command() -> List[Dict[str, Any]]:
@@ -66,7 +101,31 @@ class PiAgentBridge(_PluginBase):
                 "auth": "bear",
                 "summary": "解析公开种子链接为磁力链接与 BTIH",
             },
+            {
+                "path": "/ui",
+                "endpoint": self.open_ui,
+                "methods": ["GET"],
+                "allow_anonymous": True,
+                "summary": "打开 Pi Agent 网页（MoviePilot 管理员认证）",
+            },
+            {
+                "path": "/ui/{path:path}",
+                "endpoint": self.ui_proxy,
+                "methods": ["GET", "POST", "PUT", "DELETE"],
+                "allow_anonymous": True,
+                "summary": "Pi Agent 网页与流式 API（MoviePilot 管理员认证）",
+            },
         ]
+
+    def open_ui(self, request: Request, user: TokenPayload = Depends(verify_resource_token)):
+        if not user.super_user:
+            raise HTTPException(status_code=403, detail="Pi Agent 仅供管理员使用")
+        return RedirectResponse(str(request.url.replace(path=request.url.path + "/")))
+
+    async def ui_proxy(
+        self, path: str, request: Request, user: TokenPayload = Depends(verify_resource_token)
+    ):
+        return await proxy_request(self._runtime, path, request, user)
 
     def _require_enabled(self):
         if not self._enabled:
@@ -133,7 +192,7 @@ class PiAgentBridge(_PluginBase):
                         "content": [
                             {
                                 "component": "VSwitch",
-                                "props": {"model": "enabled", "label": "启用桥接 API"},
+                                "props": {"model": "enabled", "label": "启用 Pi Agent"},
                             }
                         ],
                     },
@@ -142,39 +201,107 @@ class PiAgentBridge(_PluginBase):
                         "props": {"cols": 12},
                         "content": [
                             {
-                                "component": "VTextField",
-                                "props": {
-                                    "model": "agent_url",
-                                    "label": "Agent 网页地址",
-                                    "placeholder": "http://服务器地址:8787",
-                                    "hint": "独立部署 Node.js 服务；这里仅提供入口和桥接 API。",
-                                    "persistent-hint": True,
-                                },
+                                "component": "VAlert",
+                                "props": {"type": "info", "variant": "tonal"},
+                                "text": (
+                                    "插件自动安装并管理运行时，无需 SSH、独立容器或额外端口。"
+                                    "首次启用会下载运行时，沿用 MP 的代理配置。"
+                                ),
                             }
                         ],
                     },
+                    *[
+                        {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [field]}
+                        for field in self._configuration_fields()
+                    ],
                 ],
             },
-        ], {"enabled": False, "agent_url": ""}
+        ], PluginConfig().model_dump()
+
+    @staticmethod
+    def _configuration_fields():
+        specifications = [
+            (
+                "provider",
+                "Pi Provider",
+                "例如 openai、anthropic、openrouter；自定义服务请填写独立名称。",
+                False,
+            ),
+            ("model", "模型 ID", "使用一个明确的模型，不自动选择或切换免费模型。", False),
+            ("api_key", "模型 API Key", "仅保存在 MP 插件配置中。", True),
+            (
+                "base_url",
+                "自定义模型端点（可选）",
+                "保留你的服务地址；Pi 原生 Provider 可留空。",
+                False,
+            ),
+            ("context_window", "上下文窗口", "自定义模型的实际上下文 token 限制。", False),
+            ("max_tokens", "最大输出 token", "自定义模型的实际输出限制。", False),
+            (
+                "feishu_app_id",
+                "飞书 App ID",
+                "启用前请关闭旧 FeishuBot，避免同一个应用被重复消费。",
+                False,
+            ),
+            ("feishu_app_secret", "飞书 App Secret", "使用应用长连接，无需公网回调地址。", True),
+            ("feishu_open_ids", "允许使用的 open_id", "逗号分隔。", False),
+            ("feishu_group_ids", "允许使用的群 ID", "逗号分隔；留空时禁用群聊。", False),
+        ]
+        fields = [
+            {"component": "VSwitch", "props": {"model": "feishu_enabled", "label": "启用飞书界面"}}
+        ]
+        for model, label, hint, secret in specifications:
+            fields.append(
+                {
+                    "component": "VTextField",
+                    "props": {
+                        "model": model,
+                        "label": label,
+                        "hint": hint,
+                        "persistent-hint": True,
+                        "type": "password"
+                        if secret
+                        else ("number" if model in ("context_window", "max_tokens") else "text"),
+                    },
+                }
+            )
+        return fields
 
     def get_page(self) -> List[dict]:
         content = [
             {
                 "component": "VAlert",
                 "props": {"type": "info", "variant": "tonal"},
-                "text": "Agent 的会话、偏好和任务保存在独立服务中。飞书和网页共用同一核心。",
+                "text": (
+                    "插件管理 Pi 运行时。会话、偏好和任务保存在 MP 配置目录，"
+                    "网页与飞书共用同一核心。"
+                ),
             },
             {
                 "component": "VChip",
-                "props": {"color": "success" if self._enabled else "warning"},
-                "text": "桥接 API 已启用" if self._enabled else "桥接 API 未启用",
+                "props": {"color": "success" if self._runtime.state == "running" else "warning"},
+                "text": {
+                    "disabled": "未启用，请先配置模型",
+                    "installing": "正在安装运行时",
+                    "starting": "正在启动",
+                    "running": "运行中",
+                    "error": "启动失败",
+                }[self._runtime.state],
             },
         ]
-        if self._agent_url:
+        if self._runtime.error:
+            content.append(
+                {"component": "VAlert", "props": {"type": "error"}, "text": self._runtime.error}
+            )
+        if self._runtime.state == "running":
             content.append(
                 {
                     "component": "VBtn",
-                    "props": {"href": self._agent_url, "target": "_blank", "color": "primary"},
+                    "props": {
+                        "href": settings.API_V1_STR + "/plugin/PiAgentBridge/ui/",
+                        "target": "_blank",
+                        "color": "primary",
+                    },
                     "text": "打开 Pi Agent",
                 }
             )

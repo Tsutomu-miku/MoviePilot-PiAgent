@@ -1,13 +1,14 @@
 import importlib.util
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -23,20 +24,46 @@ class BridgeTests(unittest.TestCase):
                 "app.chain.download",
                 "app.core",
                 "app.core.plugin",
+                "app.core.config",
+                "app.core.security",
                 "app.plugins",
                 "app.plugins.cloudautosearch",
+                "app.log",
+                "app.schemas",
             )
         }
         modules["app.plugins"]._PluginBase = object
         modules["app.chain.download"].DownloadChain = Mock()
         modules["app.core.plugin"].PluginManager = Mock()
         modules["app.plugins.cloudautosearch"].validate_download_link = Mock()
+        modules["app.core.config"].settings = types.SimpleNamespace(
+            PROXY=None,
+            GITHUB_PROXY="",
+            PORT=3001,
+            API_V1_STR="/api/v1",
+            API_TOKEN="mp-api-key",
+            PROXY_HOST="",
+        )
+        modules["app.log"].logger = Mock()
+
+        class TokenPayload(BaseModel):
+            super_user: bool
+
+        def resource_user(request: Request):
+            cookie = request.cookies.get("MoviePilot")
+            if not cookie:
+                raise HTTPException(status_code=401, detail="请先登录 MoviePilot")
+            return TokenPayload(super_user=cookie == "admin")
+
+        modules["app.schemas"].TokenPayload = TokenPayload
+        modules["app.core.security"].verify_resource_token = resource_user
         cls.module_patch = patch.dict(sys.modules, modules)
         cls.module_patch.start()
         spec = importlib.util.spec_from_file_location(
             "piagentbridge", ROOT / "plugins.v2/piagentbridge/__init__.py"
         )
         cls.module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = cls.module
         spec.loader.exec_module(cls.module)
 
     @classmethod
@@ -45,7 +72,17 @@ class BridgeTests(unittest.TestCase):
 
     def setUp(self):
         self.plugin = self.module.PiAgentBridge()
-        self.plugin.init_plugin({"enabled": True, "agent_url": "http://agent:8787"})
+        self.data_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.data_dir.cleanup)
+        self.plugin.get_data_path = lambda: Path(self.data_dir.name)
+        self.runtime_patch = patch.object(self.module, "ManagedRuntime")
+        runtime = self.runtime_patch.start().return_value
+        self.addCleanup(self.runtime_patch.stop)
+        runtime.state = "disabled"
+        runtime.error = ""
+        self.plugin.init_plugin(
+            {"enabled": True, "model": "configured-model", "api_key": "model-key"}
+        )
         self.module.DownloadChain.reset_mock()
         self.module.PluginManager.reset_mock()
 
@@ -97,7 +134,10 @@ class BridgeTests(unittest.TestCase):
         self.module.DownloadChain.return_value.list_torrents.return_value = []
         app = FastAPI()
         for route in self.plugin.get_api():
-            self.assertEqual(route["auth"], "bear")
+            if route["path"].startswith("/ui"):
+                self.assertTrue(route["allow_anonymous"])
+            else:
+                self.assertEqual(route["auth"], "bear")
             app.add_api_route(route["path"], route["endpoint"], methods=route["methods"])
         client = TestClient(app)
         self.assertEqual(
@@ -112,12 +152,37 @@ class BridgeTests(unittest.TestCase):
             200,
         )
 
-    def test_page_links_to_service_without_credentials(self):
+    def test_page_links_to_moviepilot_without_credentials(self):
+        self.plugin._runtime.state = "running"
         page = self.plugin.get_page()
         button = page[0]["content"][-1]
-        self.assertEqual(button["props"]["href"], "http://agent:8787")
-        with self.assertRaises(ValueError):
-            self.plugin.init_plugin({"agent_url": "javascript:alert(1)"})
+        self.assertEqual(button["props"]["href"], "/api/v1/plugin/PiAgentBridge/ui/")
+        with self.assertRaises(ValidationError):
+            self.plugin.init_plugin({"enabled": True})
+        with self.assertRaises(ValidationError):
+            self.plugin.init_plugin({"base_url": "javascript:alert(1)"})
+
+    def test_hosted_routes_require_moviepilot_admin_cookie(self):
+        app = FastAPI()
+        for route in self.plugin.get_api():
+            app.add_api_route(route["path"], route["endpoint"], methods=route["methods"])
+        client = TestClient(app)
+        self.assertEqual(client.get("/ui", follow_redirects=False).status_code, 401)
+        client.cookies.set("MoviePilot", "reader")
+        self.assertEqual(client.get("/ui", follow_redirects=False).status_code, 403)
+        client.cookies.set("MoviePilot", "admin")
+        response = client.get("/ui", follow_redirects=False)
+        self.assertEqual(response.status_code, 307)
+        self.assertEqual(response.headers["location"], "http://testserver/ui/")
+
+    def test_managed_environment_uses_mp_integration_key_and_stops_on_reconfigure(self):
+        environment = self.plugin._runtime.start.call_args.args[0]
+        self.assertEqual(environment["MOVIEPILOT_API_KEY"], "mp-api-key")
+        self.assertEqual(environment["MOVIEPILOT_URL"], "http://127.0.0.1:3001/api/v1/")
+        self.assertNotIn("MOVIEPILOT_PASSWORD", environment)
+        runtime = self.plugin._runtime
+        self.plugin.init_plugin({"enabled": False})
+        runtime.stop.assert_called_once()
 
 
 if __name__ == "__main__":

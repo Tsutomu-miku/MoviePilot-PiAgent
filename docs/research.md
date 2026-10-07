@@ -103,3 +103,9 @@ TypeScript 编译与 12 项回归全部通过。Node 22.23.1 的内置 SQLite �
 已按上述顺序完成 Fastify 服务、React/Vite/TanStack Query 网页、Feishu LarkChannel 适配器、共享 HTTP CLI、媒体资源与订阅工具、独立结构化偏好、原子确认和实际任务跟踪。SQLite 改用 Drizzle + better-sqlite3，并增加 MP 登录续期和版本化迁移。
 
 当前架构和验证命令以 README.md、architecture.md 为准。初始骨架的 12 项测试是历史结果；完整回归包含真实 Pi 工具循环、HTTP、飞书上下文、资源筛选、提交确认和状态证据，另有浏览器与 Python FastAPI 桥接测试。真实网络飞书连接和生产下载留待部署联调。
+
+## 插件安装方式修订
+
+用户希望直接通过 MP 安装并使用。Python 加载器限制意味着 Pi 不能直接成为 Python 模块，但并不要求用户另外部署服务。1.1.0 改为由 Python 插件托管完整 Node 运行时和现有 TypeScript 核心；模型与飞书在 MP 插件表单配置，网页通过 MP 认证代理访问。
+
+从运行中的 MP 2.15.6 读取实际源码确认：管理员登录写入资源 Cookie；`verify_resource_token` 验证其用途；`verify_token` 支持官方 `X-API-KEY` 集成认证。MP 容器为 Debian 12，可运行已打包的 Linux x64 Node 与 SQLite 模块。部署复用这些确定的接口，不维护第二套 MP 用户或登录密码，不要求 SSH 和额外端口。保留一个 Node 子进程的资源成本，简化的是安装和维护流程。

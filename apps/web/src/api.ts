@@ -24,9 +24,12 @@ export class ApiClient {
   constructor(private readonly token: string) {}
 
   private async fetch(path: string, init: RequestInit = {}): Promise<Response> {
-    const response = await fetch(`/api${path}`, {
+    const response = await fetch(new URL(`api${path}`, new URL("./", window.location.href)), {
       ...init,
-      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
+      headers: {
+        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+        "Content-Type": "application/json",
+      },
     });
     if (!response.ok) {
       const body = z.object({ message: z.string() }).parse(await response.json());

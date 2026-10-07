@@ -60,6 +60,7 @@ export interface MediaBackend {
 export interface MoviePilotOptions {
   baseUrl: string;
   accessToken?: string;
+  apiKey?: string;
   username?: string;
   password?: string;
   downloader?: string;
@@ -129,14 +130,16 @@ export class MoviePilotClient implements MediaBackend {
     schema: z.ZodType<T>,
     options: RequestOptions = {},
   ): Promise<T> {
-    if (!this.accessToken) {
+    if (!this.accessToken && !this.options.apiKey) {
       await this.refreshLogin();
     }
     const send = () =>
       this.fetchRequest(new URL(path, this.baseUrl), {
         method: options.method ?? "GET",
         headers: {
-          Authorization: `Bearer ${this.accessToken}`,
+          ...(this.options.apiKey
+            ? { "X-API-KEY": this.options.apiKey }
+            : { Authorization: `Bearer ${this.accessToken}` }),
           "Content-Type": "application/json",
         },
         body: options.body === undefined ? undefined : JSON.stringify(options.body),
@@ -149,7 +152,7 @@ export class MoviePilotClient implements MediaBackend {
     let response: Response;
     try {
       response = await send();
-      if (response.status === 401 && this.options.username) {
+      if (response.status === 401 && !this.options.apiKey && this.options.username) {
         await this.refreshLogin();
         response = await send();
       }

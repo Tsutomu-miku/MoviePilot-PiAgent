@@ -6,6 +6,32 @@ import { media, resource } from "./fixtures.js";
 
 const baseUrl = "http://moviepilot:3000/api/v1/";
 
+test("managed plugin uses MP API key without login or bearer credentials", async () => {
+  let requests = 0;
+  const request: typeof fetch = async (url, options) => {
+    requests++;
+    assert.equal(String(url), `${baseUrl}download/`);
+    const headers = new Headers(options?.headers);
+    assert.equal(headers.get("x-api-key"), "integration-key");
+    assert.equal(headers.has("authorization"), false);
+    return Response.json([]);
+  };
+  const client = new MoviePilotClient({ baseUrl, apiKey: "integration-key" }, request);
+  assert.deepEqual(await client.getDownloading(), []);
+  assert.equal(requests, 1);
+});
+
+test("rejected MP integration key is not replaced with a guessed login method", async () => {
+  let requests = 0;
+  const request: typeof fetch = async () => {
+    requests++;
+    return Response.json({ message: "invalid key" }, { status: 401 });
+  };
+  const client = new MoviePilotClient({ baseUrl, apiKey: "invalid-key" }, request);
+  await assert.rejects(client.getDownloading(), /HTTP 401/);
+  assert.equal(requests, 1);
+});
+
 test("MP client uses the configured API prefix and bearer header, and strips private fields", async () => {
   const request: typeof fetch = async (url, options) => {
     assert.equal(String(url), `${baseUrl}download/`);

@@ -11,6 +11,7 @@ import {
 import { AgentRuntime } from "../../apps/api/src/core/runtime.js";
 import { createApp } from "../../apps/api/src/http/app.js";
 import { FakeBackend } from "../../apps/api/tests/fixtures.js";
+import Fastify, { type HTTPMethods } from "fastify";
 
 const projectDir = resolve("apps/api");
 const dataDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-"));
@@ -61,9 +62,37 @@ const app = await createApp({
   tracker: { refresh: async () => undefined },
   webDir: resolve("apps/web/dist"),
 });
+const hostedPrefix = "/api/v1/plugin/PiAgentBridge/ui/";
+const host = Fastify();
+host.all<{ Params: { "*": string } }>(`${hostedPrefix}*`, async (request, reply) => {
+  if (!request.headers.cookie?.includes("mp-test-admin=1")) {
+    return reply.code(401).send({ message: "请先登录 MoviePilot" });
+  }
+  const response = await app.inject({
+    method: request.method as HTTPMethods,
+    url: request.url.slice(hostedPrefix.length - 1),
+    headers: {
+      authorization: "Bearer offline-browser-token-with-at-least-32-characters",
+      "content-type": request.headers["content-type"] ?? "application/json",
+    },
+    payload: request.body,
+  });
+  const body =
+    request.params["*"] === ""
+      ? response.body.replace(
+          "</head>",
+          '<meta name="pi-agent-host" content="moviepilot" /></head>',
+        )
+      : response.body;
+  return reply
+    .code(response.statusCode)
+    .header("content-type", response.headers["content-type"] ?? "application/json")
+    .send(body);
+});
+await host.listen({ host: "127.0.0.1", port: 8789 });
 await app.listen({ host: "127.0.0.1", port: 8788 });
 async function shutdown() {
-  const closed = app.close();
+  const closed = Promise.all([app.close(), host.close()]);
   await runtime.close();
   await closed;
   await rm(dataDir, { recursive: true, force: true });

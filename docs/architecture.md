@@ -6,7 +6,10 @@
 
 ```mermaid
 flowchart LR
-  Web[React 网页] --> API[Fastify API]
+  Web[React 网页] --> Proxy[MP 管理员认证与网页代理]
+  Proxy --> API[Fastify API]
+  Plugin[MP 插件生命周期] --> Process[托管 Node 子进程]
+  Process --> API
   CLI[CLI] --> API
   Feishu[飞书 UI] --> Runtime[Pi Agent Runtime]
   API --> Runtime
@@ -22,7 +25,9 @@ flowchart LR
   MP --> Helper[P115StrmHelper]
 ```
 
-输入身份由已认证 UI 决定，模型不选择 userId。网页访问令牌映射为配置的个人 owner；飞书 open_id 白名单也映射到这个 owner。第一版是单人工作区，不以此映射冒充多人隔离权限。
+输入身份由已认证 UI 决定，模型不选择 userId。插件网页使用 MP 管理员资源 Cookie；代理注入内部令牌，浏览器拿不到此令牌。单独部署使用网页访问令牌。两种方式及飞书 open_id 白名单都映射到同一个个人 owner。第一版是单人工作区，不以此映射冒充多人隔离权限。
+
+Python 插件安装经 SHA-256 校验的平台运行时，缓存于 MP 持久配置目录。运行时包含 Node、已编译的 API/网页和生产依赖，不依赖容器中的 npm、编译器或系统 Node。配置完成后启动一个仅监听回环地址的子进程，停用和重载时先停止旧进程。Node 检测 MP 父进程意外退出，关闭自己的队列和数据库，不留下另一份运行中的会话核心。安装或进程崩溃显示明确错误，不自动切换运行时或无限重试。
 
 ## 三种持久状态
 
@@ -73,7 +78,7 @@ MP 使用下载 hash 查询下载器完整任务列表。整理记录必须同�
 
 重复请求重放保存的 reply，不再次执行模型。中断请求不会自动重放。unknown 只核对已有精确 hash，未取得 hash 的 MP 私有 torrent 提交需要在后端人工核对。
 
-API 只接受 Bearer 令牌，不从 URL 接收认证。数据、凭据、原始站点 Cookie 和下载上下文不返回给公共 UI/模型；公共资源摘要明确挑选字段。SQL 由 Drizzle 执行，外部响应只在集成边界验证。
+Node API 只接受 Bearer 令牌，不从 URL 接收认证。MP 网页代理单独验证管理员资源 Cookie，并对写操作核对 Origin 与 Host；它只转发网页和业务 API，不转发浏览器 Cookie 或认证头到 Node。Node 调用 MP 时使用官方 `X-API-KEY` 集成方式；独立部署也支持明确配置的 JWT/账号登录。数据、凭据、原始站点 Cookie 和下载上下文不返回给公共 UI/模型；公共资源摘要明确挑选字段。SQL 由 Drizzle 执行，外部响应只在集成边界验证。
 
 ## 维护约定
 
