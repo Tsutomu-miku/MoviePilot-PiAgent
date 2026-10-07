@@ -1,9 +1,9 @@
 {
-  "version": "1.2.3",
+  "version": "1.2.4",
   "platforms": {
     "linux-x64": {
-      "url": "https://github.com/Tsutomu-miku/MoviePilot-PiAgent/releases/download/PiAgentBridge_v1.2.3/piagent-runtime-1.2.3-linux-x64.tar.gz",
-      "sha256": "6309775c3f961b15d37a0afe4c785d82356c51c2966ac3d4c6d065d474296628"
+      "url": "https://github.com/Tsutomu-miku/MoviePilot-PiAgent/releases/download/PiAgentBridge_v1.2.4/piagent-runtime-1.2.4-linux-x64.tar.gz",
+      "sha256": "29e9804079b2c5ae3a9f00aaa242c1a7a107abead1c8e28c3d611c28e98413b2"
     }
   }
 }

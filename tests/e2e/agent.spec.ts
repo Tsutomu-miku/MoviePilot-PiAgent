@@ -45,6 +45,63 @@ test("MP hosted page uses its login and relative assets without a second access 
   expect(errors).toEqual([]);
 });
 
+test("an existing MP conversation accepts button and Enter sends on an insecure HTTP origin", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const created = await page.request.post("/api/conversations", {
+    headers: { Authorization: "Bearer offline-browser-token-with-at-least-32-characters" },
+    data: { title: "已有会话" },
+  });
+  expect(created.ok()).toBe(true);
+  const conversation = await created.json();
+  const base = "http://mp.test:8789";
+  await page.context().addCookies([{ name: "mp-test-admin", value: "1", url: base }]);
+  // Forward the hostname to the local fixture while preserving its HTTP origin.
+  await page.route(`${base}/**`, async (route) => {
+    const url = new URL(route.request().url());
+    url.hostname = "127.0.0.1";
+    const response = await route.fetch({ url: url.href });
+    await route.fulfill({ response });
+  });
+  await page.goto(`${base}/api/v1/plugin/PiAgentBridge/ui/`);
+  await page.locator(`.conversation-list button[title="${conversation.id}"]`).click();
+  expect(
+    await page.evaluate(() => ({
+      secure: window.isSecureContext,
+      nativeUuid: typeof crypto.randomUUID,
+      randomBytes: typeof crypto.getRandomValues,
+    })),
+  ).toEqual({ secure: false, nativeUuid: "undefined", randomBytes: "function" });
+  for (const method of ["button", "enter"] as const) {
+    const sent = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname.endsWith(`/conversations/${conversation.id}/messages`) &&
+        response.request().method() === "POST",
+    );
+    await page.getByLabel("消息", { exact: true }).fill(`网页发送验证 ${method}`);
+    if (method === "button") {
+      await page.getByRole("button", { name: "发送", exact: true }).click();
+    } else {
+      await page.getByLabel("消息", { exact: true }).press("Enter");
+    }
+    const response = await sent;
+    expect(response.ok()).toBe(true);
+    expect(response.request().postDataJSON().requestId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    await expect(page.getByText(`网页发送验证 ${method}`, { exact: true })).toBeVisible();
+    await expect(page.locator(".chat-history")).toHaveAttribute("aria-busy", "false");
+  }
+  await expect(page.getByText("同一会话中已收到补充条件。", { exact: true })).toHaveCount(2);
+  await expect(page.getByLabel("消息", { exact: true })).toHaveValue("");
+  await page.reload();
+  await expect(page.getByText("网页发送验证 button", { exact: true })).toBeVisible();
+  await expect(page.getByText("网页发送验证 enter", { exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("search, refine, preview and confirm a download; inspect shared task state", async ({
   page,
 }) => {

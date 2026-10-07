@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { DisplayMessage, TaskSummary, UserAction, View } from "@mp-pi/contracts";
 import { messageId } from "@mp-pi/contracts";
+import { v4 as uuid } from "uuid";
 import { ApiClient } from "../api";
 
 export interface PendingReply {
@@ -18,7 +19,7 @@ export function useChat(api: ApiClient) {
   const [error, setError] = useState("");
 
   async function send(conversationId: string, text: string, action?: UserAction): Promise<void> {
-    const requestId = crypto.randomUUID();
+    const requestId = uuid();
     const placeholder: PendingReply = {
       id: requestId,
       conversationId,
