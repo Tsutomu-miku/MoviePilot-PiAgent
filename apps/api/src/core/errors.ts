@@ -12,6 +12,11 @@ export class BackendRejectedError extends AppError {
     super("BACKEND_REJECTED", message, 502);
   }
 }
+export class BackendBusyError extends AppError {
+  constructor() {
+    super("BACKEND_BUSY", "115 RSS 任务仍在运行，本次尚未提交；请稍后继续确认。", 503);
+  }
+}
 export class UnknownSubmissionError extends AppError {
   constructor() {
     super("SUBMISSION_UNKNOWN", "提交结果不确定，请核对后端任务；服务不会自动重复提交。", 502);

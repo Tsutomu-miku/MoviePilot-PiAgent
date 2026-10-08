@@ -7,15 +7,79 @@ import {
   fauxText,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
+import { EventDispatcher, normalizeCardAction, LoggerLevel } from "@larksuiteoapi/node-sdk";
 import type {
   EventMap,
   NormalizedMessage,
   SendInput,
   SendOptions,
   StreamInput,
+  RawCardActionEvent,
 } from "@larksuiteoapi/node-sdk";
 import { FeishuUi, type FeishuTransport } from "../src/ui/feishu.js";
 import { fixture, input } from "./fixtures.js";
+
+test("official Feishu v2 callbacks use event IDs, keep distinct clicks and submit each confirmation once", async (t) => {
+  const f = await fixture(t);
+  const channel = new FakeChannel();
+  const ui = new FeishuUi(f.runtime, channel, {
+    ownerId: "owner",
+    allowedOpenIds: ["ou_owner"],
+    allowedGroupIds: [],
+    onError: (error) => f.errors.push(error),
+  });
+  await ui.start();
+  f.faux.setResponses([fauxAssistantMessage("可以粘贴链接生成预览。")]);
+  channel.handlers.message?.(message("callback-context", "我要下载"));
+  await ui.idle();
+  const conversationId = f.runtime.store.getBinding("owner", "feishu:chat-one:ou_owner")!;
+  const dispatcher = new EventDispatcher({ loggerLevel: LoggerLevel.error }).register<
+    Record<"card.action.trigger", (raw: RawCardActionEvent) => object>
+  >({
+    "card.action.trigger": (raw) => {
+      const normalized = normalizeCardAction(raw, { includeRaw: true });
+      assert.ok(normalized);
+      channel.handlers.cardAction?.(normalized);
+      return {};
+    },
+  });
+  const deliver = (eventId: string, action: unknown) =>
+    dispatcher.invoke(
+      {
+        schema: "2.0",
+        header: {
+          event_type: "card.action.trigger",
+          event_id: eventId,
+          token: "verification-token",
+        },
+        event: {
+          operator: { open_id: "ou_owner" },
+          token: "same-update-credential",
+          context: { open_chat_id: "chat-one", open_message_id: "card-one" },
+          action: { tag: "button", value: { conversationId, action } },
+        },
+      },
+      { needCheck: false },
+    );
+  await deliver("preview-event", {
+    type: "prepare_links",
+    links: `magnet:?xt=urn:btih:${"a".repeat(40)}`,
+  });
+  await ui.idle();
+  const task = f.runtime.store.listTasks("owner", conversationId)[0]!;
+  assert.equal(task.state, "awaiting_confirmation");
+  const confirm = { type: "confirm", taskId: task.id, token: task.confirmationToken };
+  await deliver("confirm-event", confirm);
+  await ui.idle();
+  assert.equal(f.backend.submitCalls, 1);
+  assert.equal(f.runtime.store.getTask("owner", task.id).state, "submitted");
+  await deliver("confirm-event", confirm);
+  await ui.idle();
+  assert.equal(f.backend.submitCalls, 1);
+  assert.equal(f.faux.state.callCount, 1);
+  assert.deepEqual(f.errors, []);
+  await ui.close();
+});
 
 class FakeChannel implements FeishuTransport {
   handlers: Partial<EventMap> = {};

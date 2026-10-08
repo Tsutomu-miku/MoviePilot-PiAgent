@@ -1,4 +1,4 @@
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type {
   LarkChannel,
@@ -15,7 +15,7 @@ import { EventBuffer } from "./event-buffer.js";
 import { viewCard } from "./feishu-cards.js";
 
 const cardValueSchema = z.strictObject({ conversationId: z.string().uuid(), action: actionSchema });
-const cardTokenSchema = z.object({ token: z.string().min(1) });
+const cardEventSchema = z.object({ event_id: z.string().min(1).max(180) });
 
 export interface FeishuOptions {
   ownerId: string;
@@ -179,8 +179,8 @@ export class FeishuUi {
       throw new ConflictError("请先在当前会话发送一条消息，再使用卡片");
     }
     this.checkChat(route.chatId, route.chatType);
-    const token = cardTokenSchema.parse(event.raw).token;
-    const requestId = `card:${createHash("sha256").update(token).digest("hex")}`;
+    const { event_id } = cardEventSchema.parse(event.raw);
+    const requestId = `card:${event_id}`;
     const input: AgentInput = {
       userId: this.options.ownerId,
       conversationId: value.conversationId,

@@ -4,7 +4,12 @@ import { randomUUID } from "node:crypto";
 import { fauxAssistantMessage, fauxToolCall, type TranscriptContext } from "@earendil-works/pi-ai";
 import type { TaskSummary, UserAction, View } from "@mp-pi/contracts";
 import { fixture, input, media } from "./fixtures.js";
-import { UnknownSubmissionError, BackendRejectedError } from "../src/core/errors.js";
+import {
+  UnknownSubmissionError,
+  BackendBusyError,
+  BackendRejectedError,
+} from "../src/core/errors.js";
+import { isConfirmation } from "../src/domain/confirmation.js";
 import { TaskTracker } from "../src/services/task-tracker.js";
 
 function confirmation(views: View[]): TaskSummary {
@@ -82,6 +87,88 @@ test("a real Pi function call cannot confirm its own proposal; a later exact use
   await f.handle(input("approval", "确认"));
   assert.equal(f.backend.submitCalls, 1);
   assert.equal(f.runtime.store.getTask("owner", task.id).state, "submitted");
+});
+
+test("natural confirmation phrases authorize the existing preview without prescribing one exact reply", async (t) => {
+  const f = await fixture(t);
+  const phrases = ["立即执行吧", "确认下载这 12 集到 115", "直接提交", "继续执行", "确认"];
+  for (const [index, phrase] of phrases.entries()) {
+    const task = confirmation(
+      (
+        await f.handle(
+          action({
+            type: "prepare_links",
+            links: `magnet:?xt=urn:btih:${String(index + 1).repeat(40)}`,
+          }),
+        )
+      ).views,
+    );
+    f.faux.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall("confirm_task", { taskId: task.id, token: task.confirmationToken! }),
+      ),
+      fauxAssistantMessage("已提交。"),
+    ]);
+    await f.handle(input(randomUUID(), phrase));
+    assert.equal(f.runtime.store.getTask("owner", task.id).state, "submitted");
+  }
+  assert.equal(f.backend.submitCalls, phrases.length);
+  assert.equal(isConfirmation("确认下载哪吒"), true);
+  for (const phrase of [
+    "不要立即执行",
+    "确认后会怎么样？",
+    "确认一下资源是不是齐全",
+    "取消",
+    "确认下载，但暂缓提交",
+    "下载需要确认吗",
+    "确认下载还是不要执行",
+    "下载另一部新电影",
+  ]) {
+    assert.equal(isConfirmation(phrase), false, phrase);
+  }
+});
+
+test("expired previews release duplicate resources before a new preview is created", async (t) => {
+  const f = await fixture(t);
+  const links = `magnet:?xt=urn:btih:${"a".repeat(40)}`;
+  const previous = confirmation((await f.handle(action({ type: "prepare_links", links }))).views);
+  const task = f.runtime.store.getTask("owner", previous.id);
+  f.runtime.store.saveTask({ ...task, expiresAt: new Date(Date.now() - 1).toISOString() });
+  const fresh = confirmation((await f.handle(action({ type: "prepare_links", links }))).views);
+  assert.notEqual(fresh.id, previous.id);
+  assert.equal(fresh.state, "awaiting_confirmation");
+  assert.equal(f.runtime.store.getTask("owner", previous.id).state, "cancelled");
+  assert.equal(f.backend.submitCalls, 0);
+});
+
+test("a known busy backend preserves the confirmation while a real rejection preserves its reason", async (t) => {
+  const f = await fixture(t);
+  const task = confirmation(
+    (
+      await f.handle(
+        action({ type: "prepare_links", links: `magnet:?xt=urn:btih:${"a".repeat(40)}` }),
+      )
+    ).views,
+  );
+  const normalSubmit = f.backend.submit115.bind(f.backend);
+  f.backend.submit115 = async () => {
+    throw new BackendBusyError();
+  };
+  await assert.rejects(f.handle(confirm(task)), BackendBusyError);
+  const pending = f.runtime.store.getTask("owner", task.id);
+  assert.equal(pending.state, "awaiting_confirmation");
+  assert.equal(pending.confirmationToken, task.confirmationToken);
+  assert.match(pending.message, /尚未提交/);
+  await f.reopen();
+  f.backend.submit115 = async () => {
+    throw new BackendRejectedError("115 未登录，请重新登录");
+  };
+  await assert.rejects(f.handle(confirm(task)), /115 未登录/);
+  const rejected = f.runtime.store.getTask("owner", task.id);
+  assert.equal(rejected.state, "failed");
+  assert.equal(rejected.message, "115 未登录，请重新登录");
+  f.backend.submit115 = normalSubmit;
+  assert.equal(f.backend.submitCalls, 0);
 });
 
 test("confirmation is exactly once across simultaneous clicks and service restarts", async (t) => {

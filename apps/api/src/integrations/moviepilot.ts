@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { basename } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type { Criteria } from "@mp-pi/contracts";
 import type { Media, Resource } from "../domain/types.js";
-import { BackendRejectedError, UnknownSubmissionError } from "../core/errors.js";
+import { BackendBusyError, BackendRejectedError, UnknownSubmissionError } from "../core/errors.js";
 import {
   activeDownloadSchema,
   mpContextSchema,
@@ -206,9 +207,19 @@ export class MoviePilotClient implements MediaBackend {
   ): Promise<T> {
     const response = await this.request(path, mpEnvelopeSchema, options);
     if (!response.success) {
-      throw new BackendRejectedError("MoviePilot 未接受请求，请检查后端任务和插件配置");
+      throw this.rejection(response.message);
     }
     return this.parseResponse(dataSchema, response.data, options.mutation);
+  }
+
+  private rejection(message: string | null | undefined): BackendRejectedError {
+    let detail = message?.trim() || "MoviePilot 未接受请求，未返回具体原因";
+    for (const secret of [this.accessToken, this.options.apiKey, this.options.password]) {
+      if (secret) {
+        detail = detail.replaceAll(secret, "[REDACTED]");
+      }
+    }
+    return new BackendRejectedError(detail);
   }
 
   async searchMedia(query: string, signal?: AbortSignal): Promise<Media[]> {
@@ -289,17 +300,38 @@ export class MoviePilotClient implements MediaBackend {
   }
 
   async submit115(links: string[], signal?: AbortSignal): Promise<string> {
-    const result = await this.envelope(
-      "plugin/CloudAutoSearch/manual_submit",
-      z.object({ id: z.string().min(1) }),
-      {
-        method: "POST",
-        body: { links: links.join("\n"), force: false },
-        signal,
-        mutation: true,
-      },
-    );
-    return result.id;
+    const deadline = Date.now() + 120_000;
+    while (true) {
+      const response = await this.request(
+        "plugin/CloudAutoSearch/manual_submit",
+        mpEnvelopeSchema,
+        {
+          method: "POST",
+          body: { links: links.join("\n"), force: false },
+          signal,
+          mutation: true,
+        },
+      );
+      if (response.success) {
+        return this.parseResponse(z.object({ id: z.string().min(1) }), response.data, true).id;
+      }
+      if (response.message !== "已有任务在运行，请稍后重试") {
+        throw this.rejection(response.message);
+      }
+      // The backend explicitly rejected this request before starting a job.
+      // Only that response permits another attempt; uncertain writes propagate.
+      if (Date.now() >= deadline) {
+        throw new BackendBusyError();
+      }
+      try {
+        await delay(2_000, undefined, { signal });
+      } catch (error) {
+        if (signal?.aborted) {
+          throw new BackendBusyError();
+        }
+        throw error;
+      }
+    }
   }
 
   get115Submission(signal?: AbortSignal): Promise<OfflineSubmission> {

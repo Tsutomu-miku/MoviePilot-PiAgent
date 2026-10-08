@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MoviePilotClient } from "../src/integrations/moviepilot.js";
 import { createLarkChannel, LoggerLevel } from "@larksuiteoapi/node-sdk";
+import { BackendBusyError } from "../src/core/errors.js";
+import { setImmediate } from "node:timers/promises";
 import { media, resource, mikanRelease } from "./fixtures.js";
 
 test("Mikan adapter sends the original Chinese query to the native plugin without media lookup", async () => {
@@ -103,14 +105,75 @@ test("MP submit preserves its declared native context and never retries uncertai
 
 test("MP explicitly rejected writes differ from server errors and incomplete acknowledgements", async () => {
   const rejected = new MoviePilotClient({ baseUrl, accessToken: "secret" }, async () =>
-    Response.json({ success: false, message: "private information" }),
+    Response.json({ success: false, message: "115 未登录，请重新登录" }),
   );
-  await assert.rejects(rejected.submit115(["magnet"]), /未接受/);
+  await assert.rejects(rejected.submit115(["magnet"]), /115 未登录，请重新登录/);
   const uncertain = new MoviePilotClient(
     { baseUrl, accessToken: "secret" },
     async () => new Response("private information", { status: 503 }),
   );
   await assert.rejects(uncertain.submit115(["magnet"]), /不确定/);
+});
+
+test("115 waits for an explicitly rejected busy RSS job and starts one accepted job", async () => {
+  const bodies: unknown[] = [];
+  const client = new MoviePilotClient({ baseUrl, apiKey: "test-key" }, async (_url, options) => {
+    bodies.push(JSON.parse(String(options?.body)));
+    return bodies.length < 3
+      ? Response.json({ success: false, message: "已有任务在运行，请稍后重试" })
+      : Response.json({ success: true, data: { id: "accepted-job" } });
+  });
+  assert.equal(await client.submit115(["magnet-one", "magnet-two"]), "accepted-job");
+  assert.deepEqual(
+    bodies,
+    Array.from({ length: 3 }, () => ({ links: "magnet-one\nmagnet-two", force: false })),
+  );
+});
+
+test("115 busy timeout and cancelled waiting mean no accepted submission", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 0 });
+  let calls = 0;
+  const client = new MoviePilotClient({ baseUrl, apiKey: "test-key" }, async () => {
+    calls++;
+    return Response.json({ success: false, message: "已有任务在运行，请稍后重试" });
+  });
+  const timedOut = assert.rejects(client.submit115(["magnet"]), BackendBusyError);
+  await setImmediate();
+  t.mock.timers.tick(120_000);
+  await timedOut;
+  assert.equal(calls, 2);
+  const controller = new AbortController();
+  const cancelled = assert.rejects(
+    client.submit115(["magnet"], controller.signal),
+    BackendBusyError,
+  );
+  await setImmediate();
+  controller.abort();
+  await cancelled;
+  assert.equal(calls, 3);
+});
+
+test("115 never repeats uncertain or incomplete accepted writes, and redacts credentials in rejection details", async () => {
+  for (const response of [
+    () => new Response("backend unavailable", { status: 503 }),
+    () => Response.json({ success: true, data: {} }),
+  ]) {
+    let calls = 0;
+    const client = new MoviePilotClient({ baseUrl, apiKey: "test-key" }, async () => {
+      calls++;
+      return response();
+    });
+    await assert.rejects(client.submit115(["magnet"]), /不确定/);
+    assert.equal(calls, 1);
+  }
+  const client = new MoviePilotClient({ baseUrl, apiKey: "private-integration-key" }, async () =>
+    Response.json({ success: false, message: "无效密钥 private-integration-key，请检查配置" }),
+  );
+  await assert.rejects(client.submit115(["magnet"]), (error: Error) => {
+    assert.match(error.message, /无效密钥 \[REDACTED\]/);
+    assert.doesNotMatch(error.message, /private-integration-key/);
+    return true;
+  });
 });
 
 test("expired auth refreshes once for concurrent readers and uses configured login credentials", async () => {

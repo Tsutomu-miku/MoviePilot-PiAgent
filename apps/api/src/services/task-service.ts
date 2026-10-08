@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Destination, View } from "@mp-pi/contracts";
 import { StateStore } from "../core/store.js";
-import { ConflictError, BackendRejectedError } from "../core/errors.js";
+import { ConflictError, BackendBusyError, BackendRejectedError } from "../core/errors.js";
 import type { Identity, Task, TaskPayload, ToolContext } from "../domain/types.js";
 import { publicTask } from "../domain/types.js";
 import { filterResources } from "../domain/resources.js";
@@ -27,6 +27,12 @@ export class TaskService {
     destination: Destination,
     payload: TaskPayload,
   ): Task {
+    const now = new Date().toISOString();
+    for (const task of this.store.listTasks(context.userId)) {
+      if (task.state === "awaiting_confirmation" && task.expiresAt <= now) {
+        this.store.saveTask({ ...task, state: "cancelled", updatedAt: now, message: "确认已过期" });
+      }
+    }
     const key = submissionKey(destination, payload);
     const hashes = taskHashes(payload);
     const sourceKeys =
@@ -51,7 +57,6 @@ export class TaskService {
         });
       }
     }
-    const now = new Date().toISOString();
     const kind =
       payload.kind === "resource" || payload.kind === "links" ? "download" : payload.kind;
     return {
@@ -373,10 +378,15 @@ export class TaskService {
         task.message = task.kind === "download" ? "后端已受理，正在跟踪实际进度。" : "操作完成";
       }
     } catch (error) {
-      task.state = error instanceof BackendRejectedError ? "failed" : "unknown";
+      task.state =
+        error instanceof BackendBusyError
+          ? "awaiting_confirmation"
+          : error instanceof BackendRejectedError
+            ? "failed"
+            : "unknown";
       task.message =
-        task.state === "failed"
-          ? "后端未接受请求，请检查配置后重新预览。"
+        error instanceof BackendBusyError || error instanceof BackendRejectedError
+          ? error.message
           : "提交结果不确定，请核对后端任务；不会自动重试。";
       throw error;
     } finally {

@@ -94,6 +94,10 @@ MP 整理维护可在对话中说“查询最近的整理失败记录”。`movi
 
 在插件配置页启用飞书，填写应用凭据和允许使用的用户 `open_id`。使用同一个应用时，先停用旧 FeishuBot。群聊还需填写群 ID 白名单，并 @机器人。应用使用长连接，需订阅消息事件和卡片交互事件，开通消息发送、消息读取以及 CardKit 流式卡片权限。单独运行时使用 `.env` 中的 `FEISHU_*` 配置。
 
+飞书后台的两个页签需要分别配置：在“事件与回调 → 事件配置”订阅 `im.message.receive_v1`；在“回调配置”选择长连接，并添加新版卡片回传交互 `card.action.trigger`，然后发布应用版本。只有消息订阅时，机器人能收到文字，按钮仍会提示未配置回调。参考[飞书长连接回调说明](https://open.feishu.cn/document/event-subscription-guide/callback-subscription/step-1-choose-a-subscription-mode/configure-callback-request-address)。
+
+已有预览可以回复“立即执行吧”或“确认下载这 12 集到 115”等明确指令。过期预览允许重新创建。115 RSS 定时任务忙碌时，确认提交会等待最多两分钟；只有后端明确表示尚未受理时才继续尝试，结果不确定的请求保持待核对状态。后端返回的具体拒绝原因会保留在任务记录中。
+
 飞书按 `chat_id + sender open_id` 保存当前会话绑定。回复根消息和卡片变化不会生成新会话。
 
 - `/new`：新建会话。

@@ -41,7 +41,7 @@ class PiAgentBridge(_PluginBase):
     plugin_name = "Pi Agent 媒体助手"
     plugin_desc = "安装、配置和管理 Pi 媒体助手；网页、飞书共用同一个会话核心。"
     plugin_icon = "ChatGPT_A.png"
-    plugin_version = "1.3.2"
+    plugin_version = "1.3.3"
     plugin_author = "Tsutomu-miku"
     author_url = "https://github.com/Tsutomu-miku"
     plugin_config_prefix = "piagentbridge_"
@@ -305,7 +305,12 @@ class PiAgentBridge(_PluginBase):
                 "启用前请关闭旧 FeishuBot，避免同一个应用被重复消费。",
                 False,
             ),
-            ("feishu_app_secret", "飞书 App Secret", "使用应用长连接，无需公网回调地址。", True),
+            (
+                "feishu_app_secret",
+                "飞书 App Secret",
+                "使用应用长连接；飞书后台的回调配置需单独订阅 card.action.trigger 并发布版本。",
+                True,
+            ),
             (
                 "feishu_open_ids",
                 "允许使用的 open_id",

@@ -29,6 +29,7 @@ import { toolContext } from "./tools.js";
 import { createTools } from "../capabilities/index.js";
 import type { ToolContext } from "../domain/types.js";
 import { publicTask } from "../domain/types.js";
+import { isConfirmation } from "../domain/confirmation.js";
 import type { MediaBackend } from "../integrations/moviepilot.js";
 import { SearchService } from "../services/search-service.js";
 import { TaskService } from "../services/task-service.js";
@@ -203,7 +204,7 @@ export class AgentRuntime {
   }
 
   private approveText(input: AgentInput, context: ToolContext): void {
-    if (!/^(确认|确认下载|确认订阅|确认操作|confirm)[。！!\s]*$/i.test(input.text.trim())) {
+    if (!isConfirmation(input.text)) {
       return;
     }
     const pending = this.store
