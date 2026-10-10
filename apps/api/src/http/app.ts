@@ -68,7 +68,7 @@ export async function createApp(options: AppOptions) {
   });
   const identity = (id: string) => ({ userId: options.ownerId, conversationId: id });
 
-  app.get("/api/health", async () => ({ status: "ok", version: "1.3.3" }));
+  app.get("/api/health", async () => ({ status: "ok", version: "1.3.4" }));
   app.get("/api/skills", async () => options.runtime.skills.list(options.ownerId));
   app.get("/api/skills/:name", async (request) => {
     const { name } = skillParams.parse(request.params);

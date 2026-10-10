@@ -4,6 +4,7 @@ import { createLarkChannel } from "@larksuiteoapi/node-sdk";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { readConfig } from "./config.js";
 import { AgentRuntime } from "./core/runtime.js";
+import { configureModel } from "./core/model.js";
 import { MoviePilotClient } from "./integrations/moviepilot.js";
 import { TaskTracker } from "./services/task-tracker.js";
 import { FeishuUi } from "./ui/feishu.js";
@@ -37,10 +38,14 @@ if (config.AGENT_BASE_URL) {
 if (config.AGENT_API_KEY) {
   await models.setRuntimeApiKey(config.AGENT_PROVIDER, config.AGENT_API_KEY);
 }
-const model = models.getModel(config.AGENT_PROVIDER, config.AGENT_MODEL);
-if (!model || !models.hasConfiguredAuth(config.AGENT_PROVIDER)) {
+const selectedModel = models.getModel(config.AGENT_PROVIDER, config.AGENT_MODEL);
+if (!selectedModel || !models.hasConfiguredAuth(config.AGENT_PROVIDER)) {
   throw new Error("配置的 Pi 模型不可用或缺少 API 凭据，请检查 .env 或 data/pi/models.json");
 }
+const model = configureModel(selectedModel, {
+  contextWindow: config.AGENT_CONTEXT_WINDOW,
+  maxTokens: config.AGENT_MAX_TOKENS,
+});
 const backend = new MoviePilotClient({
   baseUrl: config.MOVIEPILOT_URL,
   accessToken: config.MOVIEPILOT_ACCESS_TOKEN,

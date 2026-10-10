@@ -17,6 +17,7 @@ import type {
 import type {
   OfflineSubmission,
   OfflineTask,
+  OfflinePluginStatus,
   Subscription,
   TransferHistory,
 } from "../src/integrations/moviepilot-contracts.js";
@@ -161,6 +162,21 @@ export class FakeBackend implements MediaBackend {
   ];
   downloads: DownloadResult[] = [];
   offline: OfflineTask[] = [];
+  offlineStatus: OfflinePluginStatus = {
+    version: "1.1.1",
+    enabled: false,
+    running: false,
+    logged_in: true,
+    credential_saved: true,
+    target_folder: "/云下载",
+    rss_count: 1,
+    login_status: {
+      state: "valid",
+      message: "115 离线接口可用",
+      checked_at: "2026-10-11 02:00:00",
+    },
+  };
+  statusCalls: boolean[] = [];
   library: LibraryResult = { exists: false };
   transfers: TransferHistory[] = [];
   subscriptions: Subscription[] = [{ id: 1, name: "示例剧集", season: 1, state: "R" }];
@@ -218,6 +234,10 @@ export class FakeBackend implements MediaBackend {
   }
   async get115Submission(): Promise<OfflineSubmission> {
     return this.submission;
+  }
+  async get115Status(refresh: boolean): Promise<OfflinePluginStatus> {
+    this.statusCalls.push(refresh);
+    return this.offlineStatus;
   }
   async get115Tasks(): Promise<OfflineTask[]> {
     return this.offline;

@@ -66,6 +66,21 @@ export const offlineTaskSchema = z.object({
   percent: z.number(),
 });
 export type OfflineTask = z.infer<typeof offlineTaskSchema>;
+export const offlinePluginStatusSchema = z.object({
+  version: z.string(),
+  enabled: z.boolean(),
+  running: z.boolean(),
+  logged_in: z.boolean(),
+  credential_saved: z.boolean(),
+  target_folder: z.string(),
+  rss_count: z.number().int().nonnegative(),
+  login_status: z.object({
+    state: z.enum(["missing", "unchecked", "valid", "invalid", "error"]),
+    message: z.string(),
+    checked_at: z.string().optional(),
+  }),
+});
+export type OfflinePluginStatus = z.infer<typeof offlinePluginStatusSchema>;
 export const submissionSchema = z.object({
   id: z.string(),
   status: z.string(),

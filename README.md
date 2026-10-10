@@ -78,7 +78,7 @@ MP 原生插件由 Python 加载。`plugins.v2/piagentbridge` 管理版本化运
 - `/ui/` 与其网页 API 使用 MP 资源 Cookie 的管理员认证；写请求校验同源，流式响应不缓冲。
 - Node 仅监听容器内 `127.0.0.1:8787`，网页始终走 MP 已有端口。
 
-115 路由需要已有 **CloudAutoSearch 1.1.0 或更新版本**完成登录和保存目录配置，并需要 **P115StrmHelper** 查询实际离线任务。磁力链接可在 Agent 本地解析 BTIH；公开 torrent URL 通过桥接解析。需要站点 Cookie 的私有种子 URL 不作为公开链接推送到 115。
+115 路由需要已有 **CloudAutoSearch 1.1.1 或更新版本**完成登录和保存目录配置，并需要 **P115StrmHelper** 查询实际离线任务。它直接调用 115 RSS 插件，独立于 MP 常规下载器。`get_115_status` 查询该插件的当前登录校验、目录和忙碌状态，默认重新校验离线接口，不提交下载；`get_115_tasks` 查询 STRM 助手当前账号的离线任务，`get_downloading` 查询 MP 常规下载器。磁力链接可在 Agent 本地解析 BTIH；公开 torrent URL 通过桥接解析。需要站点 Cookie 的私有种子 URL 不作为公开链接推送到 115。
 
 ## 飞书和 CLI
 

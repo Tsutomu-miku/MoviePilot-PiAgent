@@ -4,7 +4,7 @@ import { MoviePilotClient } from "../src/integrations/moviepilot.js";
 import { createLarkChannel, LoggerLevel } from "@larksuiteoapi/node-sdk";
 import { BackendBusyError } from "../src/core/errors.js";
 import { setImmediate } from "node:timers/promises";
-import { media, resource, mikanRelease } from "./fixtures.js";
+import { media, resource, mikanRelease, FakeBackend } from "./fixtures.js";
 
 test("Mikan adapter sends the original Chinese query to the native plugin without media lookup", async () => {
   const query = { keyword: "花织", group: "喵萌奶茶屋" };
@@ -26,6 +26,47 @@ test("Mikan adapter sends the original Chinese query to the native plugin withou
 });
 
 const baseUrl = "http://moviepilot:3000/api/v1/";
+
+test("115 diagnostics query the RSS plugin, strip private data and perform no submission", async () => {
+  const status = new FakeBackend().offlineStatus;
+  const requests: string[] = [];
+  const client = new MoviePilotClient(
+    { baseUrl, apiKey: "integration-key" },
+    async (url, options) => {
+      requests.push(String(url));
+      const refresh = String(url).endsWith("/check_login");
+      assert.equal(options?.method, refresh ? "POST" : "GET");
+      if (refresh) {
+        assert.deepEqual(JSON.parse(String(options?.body)), {});
+      }
+      return Response.json({
+        success: true,
+        data: {
+          ...status,
+          user_id: "private-user-id",
+          username: "private-name",
+          cookie: "private-cookie",
+          manual_job: { id: "older-batch" },
+        },
+      });
+    },
+  );
+  assert.deepEqual(await client.get115Status(true), status);
+  assert.deepEqual(await client.get115Status(false), status);
+  assert.deepEqual(requests, [
+    `${baseUrl}plugin/CloudAutoSearch/check_login`,
+    `${baseUrl}plugin/CloudAutoSearch/status`,
+  ]);
+  assert.equal(status.enabled, false);
+  assert.equal(status.logged_in, true);
+});
+
+test("115 diagnosis rejects unsupported responses instead of inventing a login state", async () => {
+  const client = new MoviePilotClient({ baseUrl, apiKey: "integration-key" }, async () =>
+    Response.json({ success: true, data: { logged_in: true } }),
+  );
+  await assert.rejects(client.get115Status(true), /响应不符合约定/);
+});
 
 test("managed plugin uses MP API key without login or bearer credentials", async () => {
   let requests = 0;

@@ -6,6 +6,7 @@ import { createMediaTools } from "./media.js";
 import { createTaskTools } from "./tasks.js";
 import { createMoviePilotTools } from "./moviepilot.js";
 import { createMikanTools } from "./mikan.js";
+import { createCloudTools } from "./cloud.js";
 
 export function createTools(services: ToolServices): ToolDefinition[] {
   return [
@@ -13,6 +14,7 @@ export function createTools(services: ToolServices): ToolDefinition[] {
     ...createPreferenceTools(services),
     ...createMediaTools(services),
     ...createMikanTools(services),
+    ...createCloudTools(services),
     ...createTaskTools(services),
     ...createMoviePilotTools(services),
   ];

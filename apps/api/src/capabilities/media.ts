@@ -40,7 +40,7 @@ export function createMediaTools(services: ToolServices): ToolDefinition[] {
     ),
     defineTool(
       "get_downloading",
-      "Read active MoviePilot downloads. This list excludes completed downloads.",
+      "Read active tasks in MoviePilot's ordinary downloaders. Excludes completed downloads and CloudAutoSearch's 115 tasks. Use get_115_status for the 115 RSS plugin and get_115_tasks for the 115 offline task list.",
       empty,
       (_parameters, _context, signal) => backend.getDownloading(signal),
     ),

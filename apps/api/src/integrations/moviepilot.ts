@@ -10,12 +10,14 @@ import {
   mpEnvelopeSchema,
   mpMediaSchema,
   offlineTaskSchema,
+  offlinePluginStatusSchema,
   submissionSchema,
   subscriptionSchema,
   transferHistorySchema,
   type ActiveDownload,
   type OfflineSubmission,
   type OfflineTask,
+  type OfflinePluginStatus,
   type Subscription,
   type TransferHistory,
 } from "./moviepilot-contracts.js";
@@ -61,6 +63,7 @@ export interface MediaBackend {
   submitDownload(media: Media, resource: Resource, signal?: AbortSignal): Promise<string>;
   resolveLinks(links: string[], signal?: AbortSignal): Promise<ResolvedLink[]>;
   submit115(links: string[], signal?: AbortSignal): Promise<string>;
+  get115Status(refresh: boolean, signal?: AbortSignal): Promise<OfflinePluginStatus>;
   get115Submission(signal?: AbortSignal): Promise<OfflineSubmission>;
   get115Tasks(signal?: AbortSignal): Promise<OfflineTask[]>;
   checkLibrary(media: Media, criteria: Criteria, signal?: AbortSignal): Promise<LibraryResult>;
@@ -336,6 +339,14 @@ export class MoviePilotClient implements MediaBackend {
 
   get115Submission(signal?: AbortSignal): Promise<OfflineSubmission> {
     return this.envelope("plugin/CloudAutoSearch/manual_status", submissionSchema, { signal });
+  }
+
+  get115Status(refresh: boolean, signal?: AbortSignal): Promise<OfflinePluginStatus> {
+    return this.envelope(
+      refresh ? "plugin/CloudAutoSearch/check_login" : "plugin/CloudAutoSearch/status",
+      offlinePluginStatusSchema,
+      refresh ? { method: "POST", body: {}, signal } : { signal },
+    );
   }
 
   async get115Tasks(signal?: AbortSignal): Promise<OfflineTask[]> {

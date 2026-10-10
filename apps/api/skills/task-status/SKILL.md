@@ -3,7 +3,9 @@ name: task-status
 description: Inspect downloads, native subscriptions and library presence using authoritative observations.
 ---
 
-Use get_tasks for this conversation's own tasks. get_downloading shows only active MP downloads and excludes completed tasks.
+Use get_tasks for this conversation's own tasks. get_downloading shows only active MP ordinary-downloader tasks and excludes completed tasks and 115.
+
+For 115, get_115_status reads CloudAutoSearch's current login, save folder and busy state; refresh=true checks the offline service without submitting a download. Its RSS enabled flag controls scheduled RSS only. get_115_tasks reads actual offline tasks through P115StrmHelper's configured account, including completed tasks. These tools have different scopes; a successful preview or an older failed task does not establish current connectivity.
 
 Keep query scopes explicit: neither list describes global organization history. For organization failures, read moviepilot-maintenance and use get_transfer_failures. A feature unavailable earlier may be available now; check the current tool definitions rather than repeating historical assistant claims.
 

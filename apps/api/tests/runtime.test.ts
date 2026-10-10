@@ -107,6 +107,43 @@ test("continuous messages queue in one session and different UI adapters share i
   assert.deepEqual(f.runtime.store.getPreferences("owner"), {});
 });
 
+test("restored 115 conversation can query current offline facts without using ordinary downloaders", async (t) => {
+  const f = await fixture(t);
+  f.faux.setResponses([fauxAssistantMessage("之前提交失败，请检查下载器配置")]);
+  await f.handle(input("old-attempt", "下载蜜柑动画到115"));
+  await f.reopen();
+  f.backend.offline = [{ info_hash: "a".repeat(40), name: "动画第1集", status: 2, percent: 100 }];
+  f.faux.setResponses([
+    (context) => {
+      assert.match(JSON.stringify(context.messages), /之前提交失败/);
+      assert.match(
+        JSON.stringify(context.messages.filter((message) => message.role === "system")),
+        /独立于 MP 常规下载器/,
+      );
+      return fauxAssistantMessage(fauxToolCall("get_115_status", {}));
+    },
+    (context) => {
+      const result = context.messages.filter((message) => message.role === "toolResult").at(-1);
+      assert.match(JSON.stringify(result), /CloudAutoSearch/);
+      assert.match(JSON.stringify(result), /云下载/);
+      assert.match(JSON.stringify(result), /115 离线接口可用/);
+      return fauxAssistantMessage(fauxToolCall("get_115_tasks", {}));
+    },
+    (context) => {
+      const result = context.messages.filter((message) => message.role === "toolResult").at(-1);
+      assert.match(JSON.stringify(result), /P115StrmHelper/);
+      assert.match(JSON.stringify(result), /动画第1集/);
+      return fauxAssistantMessage("115当前可用，已有一集完成；此前失败是旧记录。");
+    },
+  ]);
+  const reply = await f.handle(input("new-observation", "115没问题吧，为什么要求连接下载器？"));
+  assert.match(reply.text, /115当前可用/);
+  assert.deepEqual(f.backend.statusCalls, [true]);
+  assert.equal(f.backend.downloadCalls, 0);
+  assert.equal(f.backend.submitCalls, 0);
+  assert.equal(reply.transcript.filter((block) => block.type === "tool").length, 2);
+});
+
 test("closing and reopening restores Pi history and SQLite user preferences", async (t) => {
   const f = await fixture(t);
   f.faux.setResponses([fauxAssistantMessage("已收到Hamnet")]);
